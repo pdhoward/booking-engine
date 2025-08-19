@@ -8,9 +8,14 @@ declare global {
 }
 
 const MONGODB_URI = process.env.DB;
+const DB_NAME = process.env.MAINDBNAME;
 
 if (!MONGODB_URI) {
   throw new Error('Please define the MONGODB_URI environment variable');
+}
+
+if (!DB_NAME) {
+  throw new Error('Please define the MAINDBNAME environment variable');
 }
 
 let cached = global.mongoose;
@@ -27,6 +32,7 @@ async function dbConnect() {
   if (!cached.promise) {
     const opts = {
       bufferCommands: false,
+      dbName: DB_NAME,
     };
 
     cached.promise = mongoose.connect(MONGODB_URI!, opts).then((mongoose) => {

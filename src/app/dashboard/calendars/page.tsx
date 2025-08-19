@@ -1,13 +1,12 @@
-import { Button } from '@/components/ui/button';
-import Link from 'next/link'; 
-
-async function getCalendars() {
-  const res = await fetch('http://localhost:3000/api/calendars'); // In prod, use relative /api
-  return res.json();
-}
+// dashboard/calendars/page.tsx
+import dbConnect from '@/lib/db';
+import Calendar from '@/models/Calendar';
+import CreateCalendarModal from '@/modals/CreateCalendarModal'; 
+import Link from 'next/link';
 
 export default async function CalendarsPage() {
-  const calendars = await getCalendars();
+  await dbConnect();
+  const calendars = await Calendar.find({});
 
   return (
     <div className="p-8">
@@ -19,10 +18,7 @@ export default async function CalendarsPage() {
           </li>
         ))}
       </ul>
-      <Button onClick={async () => {
-        await fetch('/api/calendars', { method: 'POST', body: JSON.stringify({ name: 'New Calendar' }) });
-        // Refresh
-      }}>Create New</Button>
+      <CreateCalendarModal />
     </div>
   );
 }

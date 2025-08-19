@@ -14,3 +14,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: (error as Error).message }, { status: 400 });
   }
 }
+
+export async function GET() {
+  await dbConnect();
+  const calendars = await Calendar.find({});
+  return NextResponse.json(calendars);
+}
