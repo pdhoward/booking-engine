@@ -1,10 +1,9 @@
-// DateRangePicker.tsx
 "use client";
 
 import * as React from "react";
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
-import type { DateRange } from "react-day-picker"; 
+import type { DateRange } from "react-day-picker";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -13,18 +12,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 
 interface DateRangePickerProps {
   value: DateRange | undefined;
-  onChange: (range: DateRange | undefined) => void; // <-- match RD's handler
+  onChange: (range: DateRange | undefined) => void;
   className?: string;
 }
 
 export function DateRangePicker({ value, onChange, className }: DateRangePickerProps) {
-  const [date, setDate] = React.useState<DateRange | undefined>(value);
-
-  const handleSelect = (selected: DateRange | undefined) => {
-    setDate(selected);
-    onChange(selected);
-  };
-
   return (
     <div className={cn("grid gap-2", className)}>
       <Popover>
@@ -56,8 +48,8 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
             autoFocus
             mode="range"
             defaultMonth={value?.from}
-            selected={value}          // or use `date` if you prefer local state
-            onSelect={handleSelect}   // type now matches
+            selected={value}
+            onSelect={onChange}
             numberOfMonths={2}
           />
         </PopoverContent>
