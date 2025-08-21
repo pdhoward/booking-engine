@@ -3,7 +3,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-// UI (shadcn/ui)
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -291,51 +290,76 @@ export default function BookingEnginePage() {
     return [...blackoutEvents, ...holidayEvents, ...rruleEvent];
   }, [cal.blackouts, cal.holidays, cal.recurringBlackouts]);
 
-  // Init/update FullCalendar
-  useEffect(() => {
-    if (!calendarHostRef.current) return;
-    if (!calendarRef.current) {
-      calendarRef.current = new FC_Calendar(calendarHostRef.current, {
-        plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin, rrulePlugin, multiMonthPlugin],
-        initialView: view,
-        height: "auto",
-        headerToolbar: { left: "prev,next today", center: "title", right: "" },
-        selectable: true,
-        events,
-        select: (info) => {
-          const start = toISODate(info.start);
-          const end = toISODate(new Date(info.end.getTime() - 86400000));
-          if (!start || !end) return;
-          if (addMode === "blackout") {
-            setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, ...expandDateRange(start, end)]) }));
-          } else if (addMode === "holiday") {
-            setCal((p) => ({ ...p, holidays: [...p.holidays, ...expandDateRange(start, end).map((d) => ({ date: d, minNights: 1 }))] }));
-          }
-        },
-        dateClick: (info) => {
-          const iso = toISODate(info.date);
-          if (!iso) return;
-          if (addMode === "blackout") setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, iso]) }));
-          if (addMode === "holiday") setCal((p) => ({ ...p, holidays: [...p.holidays, { date: iso, minNights: 1 }] }));
-        },
-        eventClick: (info) => {
-          if (info.event.id?.startsWith("blackout-")) {
-            const d = info.event.id.replace("blackout-", "");
-            setCal((p) => ({ ...p, blackouts: p.blackouts.filter((x) => x !== d) }));
-          } else if (info.event.id?.startsWith("holiday-")) {
-            const d = info.event.id.replace("holiday-", "");
-            setCal((p) => ({ ...p, holidays: p.holidays.filter((x) => x.date !== d) }));
-          } else if (info.event.id === "recurring-blackout") {
-            setCal((p) => ({ ...p, recurringBlackouts: undefined }));
-          }
-        },
-      });
-      calendarRef.current.render();
-    } else {
-      calendarRef.current.setOption("events", events);
-      if (calendarRef.current.view.type !== view) calendarRef.current.changeView(view);
+  // ✅ CHANGED: Init/update FullCalendar — rewire handlers whenever addMode changes
+useEffect(() => {
+  if (!calendarHostRef.current) return;
+
+  // create once
+  if (!calendarRef.current) {
+    calendarRef.current = new FC_Calendar(calendarHostRef.current, {
+      plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin, rrulePlugin, multiMonthPlugin],
+      initialView: view,
+      height: "auto",
+      headerToolbar: { left: "prev,next today", center: "title", right: "" },
+      // NOTE: handlers are set below via setOption so they capture latest addMode
+      selectable: addMode !== "cursor",
+      events,
+    });
+    calendarRef.current.render();
+  }
+
+  // always keep events + view in sync
+  calendarRef.current.setOption("events", events);
+  if (calendarRef.current.view.type !== view) {
+    calendarRef.current.changeView(view);
+  }
+
+  // ✅ NEW: toggle selection ability depending on mode
+  calendarRef.current.setOption("selectable", addMode !== "cursor");
+
+  // ✅ NEW: rebind handlers so they see current addMode
+  calendarRef.current.setOption("select", (info: any) => {
+    const start = toISODate(info.start);
+    const end = toISODate(new Date(info.end.getTime() - 86400000));
+    if (!start || !end) return;
+    if (addMode === "blackout") {
+      setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, ...expandDateRange(start, end)]) }));
+    } else if (addMode === "holiday") {
+      setCal((p) => ({
+        ...p,
+        holidays: [
+          ...p.holidays,
+          ...expandDateRange(start, end).map((d) => ({ date: d, minNights: 1 })),
+        ],
+      }));
     }
-  }, [events, view, addMode]);
+  });
+
+  calendarRef.current.setOption("dateClick", (info: any) => {
+    const iso = toISODate(info.date);
+    if (!iso) return;
+    if (addMode === "blackout") {
+      setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, iso]) }));
+    } else if (addMode === "holiday") {
+      setCal((p) => ({ ...p, holidays: [...p.holidays, { date: iso, minNights: 1 }] }));
+    }
+  });
+
+  // (optional safety) block deletes in cursor mode to avoid accidental edits
+  calendarRef.current.setOption("eventClick", (info: any) => {
+    if (addMode === "cursor") return;
+    if (info.event.id?.startsWith("blackout-")) {
+      const d = info.event.id.replace("blackout-", "");
+      setCal((p) => ({ ...p, blackouts: p.blackouts.filter((x) => x !== d) }));
+    } else if (info.event.id?.startsWith("holiday-")) {
+      const d = info.event.id.replace("holiday-", "");
+      setCal((p) => ({ ...p, holidays: p.holidays.filter((x) => x.date !== d) }));
+    } else if (info.event.id === "recurring-blackout") {
+      setCal((p) => ({ ...p, recurringBlackouts: undefined }));
+    }
+  });
+}, [events, view, addMode]); // 👈 ensure addMode is a dep so handlers rebind
+
 
   // RRULE helper
   const buildRRULE = () => {
@@ -350,13 +374,11 @@ export default function BookingEnginePage() {
     }
   };
 
-  // Save handler (create new version if name matches existing)
+  // ✅ CHANGED: use saved doc from server so state snapshot reflects Mongo
   const handleSave = async () => {
     const payload = { ...cal };
-    const res = await saveCalendar(payload);
-    // optimistic UX
-    if (!payload._id) payload._id = res.id;
-    setCal(payload);
+    const { id, doc } = await saveCalendar(payload); // uses helper
+    setCal({ ...doc, _id: id });                     // keep server truth in UI
     router.refresh?.();
   };
 
@@ -611,7 +633,13 @@ export default function BookingEnginePage() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <Card className="lg:col-span-3">
               <CardContent className="p-2 md:p-4">
-                <div ref={calendarHostRef} className="border rounded-md p-2 bg-background" />
+                {/* ✅ CHANGED: add cursor style so it feels “in edit mode” */}
+                <div
+                  ref={calendarHostRef}
+                  className={`border rounded-md p-2 bg-background ${
+                    addMode === "cursor" ? "cursor-default" : "cursor-crosshair"
+                  }`}
+                />
               </CardContent>
             </Card>
 
