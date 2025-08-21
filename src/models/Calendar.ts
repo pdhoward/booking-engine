@@ -1,18 +1,24 @@
 import mongoose, { Schema } from 'mongoose';
 
 const calendarSchema = new Schema({
-  name: { type: String, required: true }, // e.g., "Cypress Resorts Main Calendar"
-  owner: { type: String, default: 'Cypress Resorts' },
-  type: { type: String, enum: ['hotel', 'appointment'], default: 'hotel' },
-  blackouts: [{ type: Date }], // Array of blackout dates
-  recurringBlackouts: { type: String }, // rrule string, e.g., 'FREQ=WEEKLY;BYDAY=SU'
-  holidays: [{ date: Date, minNights: Number }], // Example rule structure
-  rules: [{ // JSON rules for json-rules-engine
-    conditions: Schema.Types.Mixed,
-    event: Schema.Types.Mixed,
-  }],
-  currency: { type: String, default: 'USD' },
-  cancellationPolicy: { hours: Number, fee: Number }, // e.g., { hours: 48, fee: 100 }
+name: { type: String, required: true },
+owner: { type: String, default: "" },
+category: { type: String, enum: ["reservations", "appointments"], default: "reservations" },
+currency: { type: String, default: "USD" },
+cancelHours: { type: Number, default: 48 },
+cancelFee: { type: Number, default: 0 },
+version: { type: Number, default: 1 },
+active: { type: Boolean, default: true },
+blackouts: [{ type: Date }],
+recurringBlackouts: { type: String },
+holidays: [{ date: Date, minNights: Number }],
+minStayByWeekday: { type: Schema.Types.Mixed },
+seasons: [{ start: Date, end: Date, price: Number }],
+leadTime: { minDays: Number, maxDays: Number },
+rules: [{ conditions: Schema.Types.Mixed, event: Schema.Types.Mixed }],
 }, { timestamps: true });
+
+// ✅ Ensure uniqueness on (name, version)
+calendarSchema.index({ name: 1, version: 1 }, { unique: true });
 
 export default mongoose.models.Calendar || mongoose.model('Calendar', calendarSchema);
