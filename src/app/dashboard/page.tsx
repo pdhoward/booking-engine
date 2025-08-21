@@ -63,23 +63,121 @@ interface CalendarState extends CalendarMeta {
   leadTime: LeadTimeRule;
   rulesJson: string; // raw engine rules JSON
 }
+// ---- Small helpers ----
+const API_BASE = "/api/calendars";
 
-// ---- Mock data helpers (replace with real Mongo fetch/actions) ----
+function ymd(d: any): string {
+  // normalize to 'yyyy-mm-dd'
+  const iso = typeof d === "string" ? d : new Date(d).toISOString();
+  return iso.slice(0, 10);
+}
+
+function safeParseRules(json: string): any[] {
+  try {
+    const v = JSON.parse(json);
+    return Array.isArray(v) ? v : v ? [v] : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeCalendar(doc: any): CalendarState {
+  return {
+    _id: String(doc._id),
+    name: doc.name ?? "",
+    owner: doc.owner ?? "",
+    category: (doc.category ?? "reservations") as CalendarCategory,
+    currency: doc.currency ?? "USD",
+    cancelHours: Number(doc.cancelHours ?? doc.cancellationPolicy?.hours ?? 48),
+    cancelFee: Number(doc.cancelFee ?? doc.cancellationPolicy?.fee ?? 0),
+    version: Number(doc.version ?? 1),
+    active: Boolean(doc.active ?? true),
+    blackouts: (doc.blackouts ?? []).map(ymd),
+    recurringBlackouts: doc.recurringBlackouts || undefined,
+    holidays: (doc.holidays ?? []).map((h: any) => ({
+      date: ymd(h.date),
+      minNights: Number(h.minNights ?? 1),
+    })),
+    minStayByWeekday: doc.minStayByWeekday ?? {},
+    seasons: (doc.seasons ?? []).map((s: any) => ({
+      start: ymd(s.start),
+      end: ymd(s.end),
+      price: Number(s.price ?? 0),
+    })),
+    leadTime: doc.leadTime ?? { minDays: 0, maxDays: 365 },
+    // Store rules array (if any) in your text area as pretty JSON
+    rulesJson: JSON.stringify(doc.rules ?? [], null, 2),
+  };
+}
+
+// ---- Real API-backed helpers ----
+
+// Compact list for the dropdown
 async function fetchAllCalendars(): Promise<CatalogRow[]> {
-  // Replace with GET /api/calendars (Mongo)
-  return [];
+  const res = await fetch(`${API_BASE}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to load calendars");
+  const data = await res.json();
+  // server already returns compact rows; coerce types defensively
+  return (data as any[]).map((d) => ({
+    _id: String(d._id),
+    name: String(d.name),
+    version: Number(d.version ?? 1),
+    active: Boolean(d.active),
+  }));
 }
 
+// Full calendar by id
 async function fetchCalendarById(id: string): Promise<CalendarState | null> {
-  // Replace with GET /api/calendars/:id
-  return null;
+  const res = await fetch(`${API_BASE}/${id}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error("Failed to load calendar");
+  const doc = await res.json();
+  return normalizeCalendar(doc);
 }
 
-async function saveCalendar(payload: CalendarState): Promise<{ id: string }>{
-  // Replace with POST /api/calendars (create new version) or PATCH when editing
-  return { id: payload._id || "temp-id" };
-}
+// Save: POST (new version) or PATCH (edit existing)
+async function saveCalendar(
+  payload: CalendarState,
+  opts?: { mode?: "version" | "overwrite" } // optional toggle if you expose it in UI
+): Promise<{ id: string; doc: CalendarState }> {
+  const { _id, rulesJson, ...rest } = payload;
 
+  // Map back to API shape (dates as strings are OK; mongoose will coerce)
+  const body = {
+    ...rest,
+    blackouts: rest.blackouts.map(ymd),
+    recurringBlackouts: rest.recurringBlackouts || undefined,
+    holidays: rest.holidays.map((h) => ({ date: ymd(h.date), minNights: h.minNights })),
+    seasons: rest.seasons.map((s) => ({ start: ymd(s.start), end: ymd(s.end), price: s.price })),
+    rules: safeParseRules(rulesJson),
+    ...(opts?.mode ? { mode: opts.mode } : {}),
+  };
+
+  let res: Response;
+  if (_id) {
+    // Editing this specific version
+    res = await fetch(`${API_BASE}/${_id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } else {
+    // Creating a new version of this name
+    res = await fetch(`${API_BASE}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body), // default mode=version on server
+    });
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || "Save failed");
+  }
+
+  const saved = await res.json();
+  return { id: String(saved._id), doc: normalizeCalendar(saved) };
+}
 // ---- Booking Test Engine (client-side demo evaluator) ----
 function evaluateBookingRequest(
   cal: CalendarState,
@@ -629,34 +727,6 @@ export default function BookingEnginePage() {
 /*
 INTEGRATION NOTES
 =================
-1) Mongo Schema Update (add fields to your Calendar model):
-
-const calendarSchema = new Schema({
-  name: { type: String, required: true },
-  owner: { type: String, default: "" },
-  category: { type: String, enum: ["reservations", "appointments"], default: "reservations" },
-  currency: { type: String, default: "USD" },
-  cancelHours: { type: Number, default: 48 },
-  cancelFee: { type: Number, default: 0 },
-  version: { type: Number, default: 1 },
-  active: { type: Boolean, default: true },
-  blackouts: [{ type: Date }],
-  recurringBlackouts: { type: String },
-  holidays: [{ date: Date, minNights: Number }],
-  minStayByWeekday: { type: Schema.Types.Mixed },
-  seasons: [{ start: Date, end: Date, price: Number }],
-  leadTime: { minDays: Number, maxDays: Number },
-  rules: [{ conditions: Schema.Types.Mixed, event: Schema.Types.Mixed }],
-}, { timestamps: true });
-
-2) Unique index by (name, version):
-calendarSchema.index({ name: 1, version: 1 }, { unique: true });
-
-3) Route handlers expected by this page (examples):
-- GET /api/calendars            -> list {_id, name, version, active}
-- GET /api/calendars/:id        -> full CalendarState
-- POST /api/calendars           -> create; if name exists, auto-increment version
-- PATCH /api/calendars/:id      -> update existing version
 
 4) Versioning rule (server-side): when creating a calendar with an existing name and no explicit version, set version = max(version where name) + 1.
 
