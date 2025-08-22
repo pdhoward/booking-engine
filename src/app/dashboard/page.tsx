@@ -695,7 +695,7 @@ useEffect(() => {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <Card className="lg:col-span-3">
               <CardContent className="p-2 md:p-4">
-                {/* ✅ CHANGED: add cursor style so it feels “in edit mode” */}
+                {/* ✅ cursor style so it feels “in edit mode” */}
                 <div
                   ref={calendarHostRef}
                   className={`border rounded-md p-2 bg-background ${
@@ -802,7 +802,7 @@ useEffect(() => {
         {/* FOOTER */}
         <footer className="mx-auto max-w-screen-2xl px-3 md:px-6 pb-8 pt-2 text-xs text-muted-foreground">
           <div className="flex items-center justify-between">
-            <span>© {new Date().getFullYear()} Booking Engine</span>
+            <span>© {new Date().getFullYear()} Strategic Machines Booking Engine</span>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(JSON.stringify(cal, null, 2))}><UploadCloud className="h-4 w-4 mr-2"/>Copy JSON</Button>
               <Button variant="outline" size="sm" onClick={resetToNew}><RotateCcw className="h-4 w-4 mr-2"/>Reset</Button>
