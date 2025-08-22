@@ -27,6 +27,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import multiMonthPlugin from "@fullcalendar/multimonth";
+
 import { RRule, Weekday, Options } from "rrule";
 
 // Local utils (adapted from your codebase)
@@ -276,90 +277,144 @@ export default function BookingEnginePage() {
   }, []);
 
   // Build FullCalendar events
-  const events: EventInput[] = useMemo(() => {
-    const blackoutEvents = cal.blackouts.map((iso) => ({
-      id: `blackout-${iso}`, start: iso, allDay: true, display: "background", color: "#5b5b5b55", title: "Blackout",
-    }));
-    const holidayEvents = cal.holidays.map((h) => ({
-      id: `holiday-${h.date}`, start: h.date, allDay: true, title: `Holiday (min ${h.minNights})`, color: "#f59e0b",
-    }));
-    const rruleEvent = cal.recurringBlackouts
-      ? [{ id: "recurring-blackout", rrule: cal.recurringBlackouts, duration: { days: 1 }, display: "background", color: "#3f3f3f55", title: "Recurring Blackout" }]
-      : [];
-    // (Optional) reservations/appointments rendering could be added here.
-    return [...blackoutEvents, ...holidayEvents, ...rruleEvent];
-  }, [cal.blackouts, cal.holidays, cal.recurringBlackouts]);
+  // refactor to add appointments and reservations
+const events: EventInput[] = useMemo(() => {
+  const isBgOnly = view === "dayGridMonth" || view === "multiMonthYear";
 
-  // ✅ CHANGED: Init/update FullCalendar — rewire handlers whenever addMode changes
+  const blackoutEvents = cal.blackouts.map((iso) => ({
+    id: `blackout-${iso}`,
+    start: iso,
+    allDay: true,
+    display: "background",
+    color: "#5b5b5b55",
+    title: "Blackout",
+  }));
+
+  const holidayEvents = cal.holidays.map((h) => ({
+    id: `holiday-${h.date}`,
+    start: h.date,
+    allDay: true,
+    ...(isBgOnly
+      ? { display: "background" } // month/multi-month -> no foreground chip
+      : { title: `Holiday (min ${h.minNights})` } // week/day -> show label
+    ),
+    color: "#f59e0b",
+  }));
+
+  const rruleEvent = cal.recurringBlackouts
+    ? [{
+        id: "recurring-blackout",
+        rrule: cal.recurringBlackouts,
+        duration: { days: 1 },
+        display: "background",
+        color: "#3f3f3f55",
+        title: "Recurring Blackout",
+      }]
+    : [];
+
+  return [...blackoutEvents, ...holidayEvents, ...rruleEvent];
+}, [cal.blackouts, cal.holidays, cal.recurringBlackouts, view]); // ✅ include `view`
+
+
+// ✅ Init/update FullCalendar — rewire handlers whenever addMode changes
+// 1) Create once / destroy on unmount
 useEffect(() => {
-  if (!calendarHostRef.current) return;
+  if (!calendarHostRef.current || calendarRef.current) return;
 
-  // create once
-  if (!calendarRef.current) {
-    calendarRef.current = new FC_Calendar(calendarHostRef.current, {
-      plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin, rrulePlugin, multiMonthPlugin],
-      initialView: view,
-      height: "auto",
-      headerToolbar: { left: "prev,next today", center: "title", right: "" },
-      // NOTE: handlers are set below via setOption so they capture latest addMode
-      selectable: addMode !== "cursor",
-      events,
+  const cal = new FC_Calendar(calendarHostRef.current, {
+    plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin, rrulePlugin, multiMonthPlugin],
+    initialView: view,
+    contentHeight: "auto",              // ✅ stable grid height
+    headerToolbar: { left: "prev,next today", center: "title", right: "" },
+    selectable: addMode !== "cursor",   // initial; will be kept in sync below
+    events,                             // initial; will be kept in sync below
+    themeSystem: "standard",            // ✅ keeps the standard theme consistent
+    dayMaxEvents: true,                 // ✅ prevents overcrowding from distorting rows when events render
+    expandRows: true,                   // ✅ keeps month grid height consistent   
+    fixedWeekCount: true,               // always 6 weeks in month view (prevents jumpy grids) 
+    selectMirror: true,                 // ✅ better UX + fewer accidental drags on touchpads
+    longPressDelay: 180,
+    selectMinDistance: 8,
+  });
+
+  cal.render();
+  calendarRef.current = cal;
+
+  return () => {
+    cal.destroy();
+    calendarRef.current = null;
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
+
+// 2) Keep events/view/mode in sync + rebind handlers (batched)
+useEffect(() => {
+  const cal = calendarRef.current;
+  if (!cal) return;
+
+  cal.batchRendering(() => {
+    // keep data + view in sync
+    cal.setOption("events", events);
+    if (cal.view.type !== view) cal.changeView(view);
+
+    // toggle selection based on mode
+    cal.setOption("selectable", addMode !== "cursor");
+
+    // rebind handlers so they capture latest addMode
+    cal.setOption("select", (info: any) => {
+      const start = toISODate(info.start);
+      const end = toISODate(new Date(info.end.getTime() - 86400000));
+      if (!start || !end) return;
+
+      if (addMode === "blackout") {
+        setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, ...expandDateRange(start, end)]) }));
+      } 
+
+      if (addMode === "holiday") {
+        setCal(p => {
+          const seen = new Set(p.holidays.map(h => ymd(h.date)));
+          const toAdd = expandDateRange(start, end)
+            .filter(d => !seen.has(d))
+            .map(d => ({ date: d, minNights: 1 }));
+          return { ...p, holidays: [...p.holidays, ...toAdd] };
+        });
+      }
+
     });
-    calendarRef.current.render();
-  }
 
-  // always keep events + view in sync
-  calendarRef.current.setOption("events", events);
-  if (calendarRef.current.view.type !== view) {
-    calendarRef.current.changeView(view);
-  }
+    cal.setOption("dateClick", (info: any) => {
+      const iso = toISODate(info.date);
+      if (!iso) return;
 
-  // ✅ NEW: toggle selection ability depending on mode
-  calendarRef.current.setOption("selectable", addMode !== "cursor");
+      if (addMode === "blackout") {
+        setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, iso]) }));
+      } 
 
-  // ✅ NEW: rebind handlers so they see current addMode
-  calendarRef.current.setOption("select", (info: any) => {
-    const start = toISODate(info.start);
-    const end = toISODate(new Date(info.end.getTime() - 86400000));
-    if (!start || !end) return;
-    if (addMode === "blackout") {
-      setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, ...expandDateRange(start, end)]) }));
-    } else if (addMode === "holiday") {
-      setCal((p) => ({
-        ...p,
-        holidays: [
-          ...p.holidays,
-          ...expandDateRange(start, end).map((d) => ({ date: d, minNights: 1 })),
-        ],
-      }));
-    }
+      if (addMode === "holiday") {
+        setCal(p => {
+          if (p.holidays.some(h => ymd(h.date) === iso)) return p; // already there
+          return { ...p, holidays: [...p.holidays, { date: iso, minNights: 1 }] };
+        });
+      }
+    });
+
+    cal.setOption("eventClick", (info: any) => {
+      if (addMode === "cursor") return;
+
+      if (info.event.id?.startsWith("blackout-")) {
+        const d = info.event.id.replace("blackout-", "");
+        setCal((p) => ({ ...p, blackouts: p.blackouts.filter((x) => x !== d) }));
+      } else if (info.event.id?.startsWith("holiday-")) {
+        const d = info.event.id.replace("holiday-", "");
+        setCal((p) => ({ ...p, holidays: p.holidays.filter((x) => x.date !== d) }));
+      } else if (info.event.id === "recurring-blackout") {
+        setCal((p) => ({ ...p, recurringBlackouts: undefined }));
+      }
+    });
   });
-
-  calendarRef.current.setOption("dateClick", (info: any) => {
-    const iso = toISODate(info.date);
-    if (!iso) return;
-    if (addMode === "blackout") {
-      setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, iso]) }));
-    } else if (addMode === "holiday") {
-      setCal((p) => ({ ...p, holidays: [...p.holidays, { date: iso, minNights: 1 }] }));
-    }
-  });
-
-  // (optional safety) block deletes in cursor mode to avoid accidental edits
-  calendarRef.current.setOption("eventClick", (info: any) => {
-    if (addMode === "cursor") return;
-    if (info.event.id?.startsWith("blackout-")) {
-      const d = info.event.id.replace("blackout-", "");
-      setCal((p) => ({ ...p, blackouts: p.blackouts.filter((x) => x !== d) }));
-    } else if (info.event.id?.startsWith("holiday-")) {
-      const d = info.event.id.replace("holiday-", "");
-      setCal((p) => ({ ...p, holidays: p.holidays.filter((x) => x.date !== d) }));
-    } else if (info.event.id === "recurring-blackout") {
-      setCal((p) => ({ ...p, recurringBlackouts: undefined }));
-    }
-  });
-}, [events, view, addMode]); // 👈 ensure addMode is a dep so handlers rebind
-
+  // ensure FC re-measures once after updates (prevents grid jump)
+  cal.updateSize();
+}, [events, view, addMode, setCal]); // 👈 ensure addMode is a dep so handlers rebind
 
   // RRULE helper
   const buildRRULE = () => {
@@ -423,15 +478,22 @@ useEffect(() => {
               <CalendarIcon className="h-5 w-5" />
               <span className="font-semibold tracking-tight">Booking Engine</span>
               <Badge variant={cal.active ? "default" : "secondary"} className="ml-2">{cal.active ? "Active" : "Suspended"}</Badge>
-              {cal.name && <Badge variant="outline" className="ml-1">v{cal.version}</Badge>}
+              {/* ✅ visual cue for the selected calendar */}
+              {cal.name && (
+                <Badge
+                  className={`ml-1 ${cal.category === "reservations" ? "bg-blue-600" : "bg-green-600"} text-white`}
+                >
+                  {cal.name} • v{cal.version}
+                </Badge>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
               {/* NEW / EDIT METADATA DROPDOWN (compact) */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <Plus className="h-4 w-4" /> New / Meta <ChevronDown className="h-3 w-3" />
+                  <Button variant="outline" size="sm" className="gap-1 text-xs">
+                    <Plus className="h-4 w-4" /> Meta <ChevronDown className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent className="w-[360px] p-3" align="end">
@@ -484,7 +546,7 @@ useEffect(() => {
               {/* EXISTING CALENDAR PICKER */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1">
+                  <Button variant="outline" size="sm" className="gap-1 text-xs">
                     <Database className="h-4 w-4" /> Calendars <ChevronDown className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -722,8 +784,8 @@ useEffect(() => {
                   <div>
                     <div className="text-xs text-muted-foreground mb-1">Holidays</div>
                     <ul className="max-h-[120px] overflow-y-auto text-sm space-y-1">
-                      {cal.holidays.map((h) => (
-                        <li key={h.date} className="flex items-center gap-2">
+                      {cal.holidays.map((h, i) => (
+                        <li key={`${h.date}-${i}`} className="flex items-center gap-2">
                           <span className="w-28">{h.date}</span>
                           <Input type="number" value={h.minNights} onChange={(e) => setCal((p) => ({ ...p, holidays: p.holidays.map((x) => x.date === h.date ? { ...x, minNights: +e.target.value || 1 } : x) }))} className="h-7 w-24 text-xs"/>
                           <Button variant="ghost" size="icon" onClick={() => setCal((p) => ({ ...p, holidays: p.holidays.filter((x) => x.date !== h.date) }))}><MinusCircle className="h-4 w-4"/></Button>

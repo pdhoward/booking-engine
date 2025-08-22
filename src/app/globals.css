@@ -120,3 +120,31 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ✅ Keep FC borders visible even with Tailwind preflight */
+.fc-theme-standard td,
+.fc-theme-standard th {
+  border-style: solid !important;
+  border-width: 1px !important;
+  /* use FC var if present; fall back to a subtle gray */
+  border-color: var(--fc-border-color, rgba(0,0,0,0.12)) !important;
+}
+
+/* ✅ Prevent table width jitter when content/overlays render */
+.fc .fc-scrollgrid-sync-table {
+  table-layout: fixed !important;
+  width: 100% !important;
+}
+
+/* ✅ FC prefers separate borders; Tailwind collapses by default */
+.fc .fc-scrollgrid {
+  border-collapse: separate !important;
+}
+
+/* ✅ Background events should never sit above borders/text */
+.fc .fc-daygrid-day-frame { position: relative; }
+.fc .fc-daygrid-day-bg { z-index: 0 !important; }
+.fc .fc-bg-event { z-index: 0 !important; opacity: 0.25; }
+
+/* avoid outlines inside FC that can mask borders */
+.fc, .fc * { outline: none !important; }
