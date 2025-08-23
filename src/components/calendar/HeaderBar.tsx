@@ -119,29 +119,63 @@ export default function HeaderBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Existing calendars dropdown */}
+        {/* Existing calendars dropdown (scrollable list, active-first, show version + state) */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="gap-1 text-xs">
               <Database className="h-4 w-4" /> Calendars <ChevronDown className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent className="w-[320px]" align="end">
+
+          <DropdownMenuContent className="w-[360px]" align="end">
             <DropdownMenuLabel className="text-xs">Select to Edit</DropdownMenuLabel>
             <DropdownMenuSeparator />
+
             {loadingCatalog && <DropdownMenuItem disabled>Loading…</DropdownMenuItem>}
-            {!loadingCatalog && catalog.length === 0 && <DropdownMenuItem disabled>No calendars</DropdownMenuItem>}
-            {!loadingCatalog && catalog.map((c) => (
-              <DropdownMenuItem key={c._id} onClick={async () => {
-                const full = await fetchCalendarById(c._id);
-                if (full) setCal(full);
-              }} className="justify-between">
-                <span>{c.name}</span>
-                <span className="text-xs text-muted-foreground">v{c.version}{c.active ? " • active" : ""}</span>
-              </DropdownMenuItem>
-            ))}
+            {!loadingCatalog && catalog.length === 0 && (
+              <DropdownMenuItem disabled>No calendars</DropdownMenuItem>
+            )}
+
+            {!loadingCatalog && catalog.length > 0 && (
+              <div className="max-h-72 overflow-y-auto pr-1">
+                {[...catalog]
+                  .sort(
+                    (a, b) =>
+                      Number(b.active) - Number(a.active) || // active first
+                      b.version - a.version ||               // newest version
+                      a.name.localeCompare(b.name)           // then by name
+                  )
+                  .map((c) => (
+                    <DropdownMenuItem
+                      key={c._id}
+                      onClick={async () => {
+                        const full = await fetchCalendarById(c._id);
+                        if (full) setCal(full);
+                      }}
+                      className="justify-between gap-2"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            c.active ? "bg-emerald-500" : "bg-zinc-400"
+                          }`}
+                          aria-hidden
+                        />
+                        <span className="truncate">{c.name}</span>
+                      </div>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        v{c.version}{c.active ? " • active" : ""}
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+              </div>
+            )}
+
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onReset}><RefreshCcw className="h-3 w-3 mr-2" />New Calendar</DropdownMenuItem>
+            <DropdownMenuItem onClick={onReset}>
+              <RefreshCcw className="h-3 w-3 mr-2" />
+              New Calendar
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
