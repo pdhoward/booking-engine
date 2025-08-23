@@ -290,16 +290,30 @@ const events: EventInput[] = useMemo(() => {
     title: "Blackout",
   }));
 
+  // holiday event renders as baclground
+
+  // const holidayEvents = cal.holidays.map((h) => ({
+  //   id: `holiday-${h.date}`,
+  //   start: h.date,
+  //   allDay: true,
+  //   ...(isBgOnly
+  //     ? { display: "background" } // month/multi-month -> no foreground chip
+  //     : { title: `Holiday (min ${h.minNights})` } // week/day -> show label
+  //   ),
+  //   color: "#f59e0b",
+  // }));
+
+  // ✅ holidays render as foreground pills with text
   const holidayEvents = cal.holidays.map((h) => ({
     id: `holiday-${h.date}`,
     start: h.date,
     allDay: true,
-    ...(isBgOnly
-      ? { display: "background" } // month/multi-month -> no foreground chip
-      : { title: `Holiday (min ${h.minNights})` } // week/day -> show label
-    ),
-    color: "#f59e0b",
+    display: "block",                 // <-- force foreground, not background
+    title: `Holiday (min ${h.minNights})`,
+    classNames: ["fc-holiday-pill"],  // for custom styling
+    
   }));
+
 
   const rruleEvent = cal.recurringBlackouts
     ? [{
@@ -413,7 +427,8 @@ useEffect(() => {
     });
   });
   // ensure FC re-measures once after updates (prevents grid jump)
-  cal.updateSize();
+  // function on the Browser being executed
+  requestAnimationFrame(() => cal.updateSize()); // ✅ ensure gridlines re-measure post-DOM change
 }, [events, view, addMode, setCal]); // 👈 ensure addMode is a dep so handlers rebind
 
   // RRULE helper
@@ -695,13 +710,13 @@ useEffect(() => {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
             <Card className="lg:col-span-3">
               <CardContent className="p-2 md:p-4">
-                {/* ✅ cursor style so it feels “in edit mode” */}
-                <div
-                  ref={calendarHostRef}
-                  className={`border rounded-md p-2 bg-background ${
-                    addMode === "cursor" ? "cursor-default" : "cursor-crosshair"
-                  }`}
-                />
+                {/* ✅ cursor style change so it feels “in edit mode” */}               
+                <div className={addMode !== "cursor" ? "cursor-crosshair" : "cursor-auto"}>
+                  <div
+                    ref={calendarHostRef}
+                    className="w-full border rounded-md p-2 bg-background"  // ✅ host stays constant
+                  />
+                </div>               
               </CardContent>
             </Card>
 
@@ -813,14 +828,3 @@ useEffect(() => {
     </TooltipProvider>
   );
 }
-
-/*
-INTEGRATION NOTES
-=================
-
-4) Versioning rule (server-side): when creating a calendar with an existing name and no explicit version, set version = max(version where name) + 1.
-
-5) Reservations/appointments overlay: add your events as EventInput[] in `events`.
-
-6) Access control & validation: validate ISO dates and RRULE on API level as well.
-*/
