@@ -21,4 +21,12 @@ rules: [{ conditions: Schema.Types.Mixed, event: Schema.Types.Mixed }],
 // ✅ Ensure uniqueness on (name, version)
 calendarSchema.index({ name: 1, version: 1 }, { unique: true });
 
+calendarSchema.virtual("units", {
+  ref: "Unit",
+  localField: "_id",
+  foreignField: "calendars.calendarId",
+  justOne: false,
+});
+
+
 export default mongoose.models.Calendar || mongoose.model('Calendar', calendarSchema);
