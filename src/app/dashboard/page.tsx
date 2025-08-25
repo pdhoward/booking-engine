@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 
 import HeaderBar from "@/components/calendar/HeaderBar";
@@ -31,6 +31,8 @@ export default function BookingEnginePage() {
   const [view, setView] = useState<"dayGridMonth" | "timeGridWeek" | "timeGridDay" | "multiMonthYear">("dayGridMonth");
   const [addMode, setAddMode] = useState<"cursor" | "blackout" | "holiday">("cursor");
 
+  const [savedSnapshot, setSavedSnapshot] = useState<CalendarState | null>(null);
+
   useEffect(() => {
     (async () => {
       setLoadingCatalog(true);
@@ -43,19 +45,58 @@ export default function BookingEnginePage() {
     })();
   }, []);
 
+  // set initial snapshot once (new page load)
+  useEffect(() => {
+    if (savedSnapshot === null) setSavedSnapshot(cal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // compute "dirty" using a simple deep compare
+  const isDirty = useMemo(() => {
+    if (!savedSnapshot) return false;
+    return JSON.stringify(cal) !== JSON.stringify(savedSnapshot);
+  }, [cal, savedSnapshot]);
+
+  // refresh the snapshot with the server-truth
   const handleSave = async () => {
-    const { id, doc } = await saveCalendar(cal);
+    const payload = { ...cal };
+    const { id, doc } = await saveCalendar(payload);
     setCal({ ...doc, _id: id });
+    setSavedSnapshot(doc);  // ✅ reset "dirty" after successful save
     router.refresh?.();
   };
 
+  // Warn on tab close if there are unsaved changes
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      e.preventDefault();
+      e.returnValue = ""; // required by some browsers
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // --- when resetting to a new calendar, also refresh snapshot
   const resetToNew = () => {
-    setCal({
-      name: "", owner: "", category: "reservations", currency: "USD",
-      cancelHours: 48, cancelFee: 0, version: 1, active: true,
-      blackouts: [], holidays: [], minStayByWeekday: {}, seasons: [],
-      leadTime: { minDays: 0, maxDays: 365 }, rulesJson: "[]",
-    });
+    const next: CalendarState = {
+      name: "",
+      owner: "",
+      category: "reservations",
+      currency: "USD",
+      cancelHours: 48,
+      cancelFee: 0,
+      version: 1,
+      active: true,
+      blackouts: [],
+      holidays: [],
+      minStayByWeekday: {},
+      seasons: [],
+      leadTime: { minDays: 0, maxDays: 365 },
+      rulesJson: "[]",
+    };
+    setCal(next);
+    setSavedSnapshot(next); // ✅ reset "dirty" on reset
   };
 
   return (
@@ -73,6 +114,8 @@ export default function BookingEnginePage() {
           loadingCatalog={loadingCatalog}
           onSave={handleSave}
           onReset={resetToNew}
+          isDirty={isDirty}                     
+          setSavedSnapshot={setSavedSnapshot}   
         />
       </header>
 

@@ -31,11 +31,14 @@ type Props = {
   catalog: CatalogRow[];
   loadingCatalog: boolean;
   onSave: () => Promise<void>;
-  onReset: () => void;
+  onReset: () => void; 
+  isDirty: boolean;
+  setSavedSnapshot: (snap: CalendarState) => void;
 };
 
+
 export default function HeaderBar({
-  cal, setCal, addMode, setAddMode, view, setView, catalog, loadingCatalog, onSave, onReset
+  cal, setCal, addMode, setAddMode, view, setView, catalog, loadingCatalog, onSave, onReset, isDirty, setSavedSnapshot
 }: Props) {
   // Local state for test drawer
   const [testOpen, setTestOpen] = useState(false);
@@ -59,6 +62,12 @@ export default function HeaderBar({
           </Badge>
         ) : (
           <Badge className="ml-1 bg-red-600 text-white">new calendar</Badge>
+        )}
+
+        {isDirty && (
+          <Badge className="ml-1 border-amber-500 text-amber-700 bg-amber-50">
+            Unsaved
+          </Badge>
         )}
       </div>
 
@@ -150,7 +159,10 @@ export default function HeaderBar({
                       key={c._id}
                       onClick={async () => {
                         const full = await fetchCalendarById(c._id);
-                        if (full) setCal(full);
+                        if (full) {
+                          setCal(full);
+                          setSavedSnapshot(full);   // after selecting an existing calendar - all in sync
+                        }
                       }}
                       className="justify-between gap-2"
                     >
@@ -274,7 +286,22 @@ export default function HeaderBar({
           </SheetContent>
         </Sheet>
 
-        <Button variant="outline" size="sm" onClick={onSave}><Save className="h-4 w-4 mr-2" />Save</Button>
+        <Button
+          variant={isDirty ? "default" : "outline"}
+          size="sm"
+          onClick={onSave}
+          className={isDirty ? "relative ring-2 ring-amber-400" : undefined}
+        >
+          {isDirty && (
+            <>
+              <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500 animate-ping" />
+              <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-amber-500" />
+            </>
+          )}
+          <Save className="h-4 w-4 mr-2" />
+          {isDirty ? "Save changes" : "Save"}
+        </Button>
+
       </div>
     </div>
   );
