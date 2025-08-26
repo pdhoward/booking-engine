@@ -157,3 +157,12 @@
   line-height: 1.2;
   color: #f59e0b;
 }
+
+/* make reservation pills compact */
+/* small rounded foreground pill */
+.fc-reservation-pill {  
+  border-radius: 9999px;
+  padding: 0 6px;
+  font-weight: 600;
+}
+

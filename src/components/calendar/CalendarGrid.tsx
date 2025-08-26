@@ -18,9 +18,10 @@ type Props = {
   setCal: React.Dispatch<React.SetStateAction<CalendarState>>;
   view: "dayGridMonth" | "timeGridWeek" | "timeGridDay" | "multiMonthYear";
   addMode: "cursor" | "blackout" | "holiday";
+  reservationEvents?: EventInput[];
 };
 
-export default function CalendarGrid({ cal, setCal, view, addMode }: Props) {
+export default function CalendarGrid({ cal, setCal, view, addMode, reservationEvents=[] }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<FC_Calendar | null>(null);
 
@@ -55,8 +56,8 @@ export default function CalendarGrid({ cal, setCal, view, addMode }: Props) {
         }]
       : [];
 
-    return [...blackoutEvents, ...holidayEvents, ...rruleEvent];
-  }, [cal.blackouts, cal.holidays, cal.recurringBlackouts]);
+     return [...blackoutEvents, ...holidayEvents, ...rruleEvent, ...reservationEvents];
+  }, [cal.blackouts, cal.holidays, cal.recurringBlackouts, reservationEvents]);
 
   // Create once / destroy on unmount
   useEffect(() => {

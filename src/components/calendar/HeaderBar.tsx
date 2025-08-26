@@ -3,10 +3,17 @@
 // What: Top navbar actions (meta dropdown, calendar picker, mode toggles,
 //       view switch, test sheet, save). Shows active name/version badge.
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
 import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
 import { fetchCalendarById } from "@/lib/api/calendars";
+
+import type { Unit } from "@/types/unit";
+import type { Reservation } from "@/types/reservation";
+import { fetchAllUnits } from "@/lib/api/units";
+import { checkUnitAvailability, addDaysYMD } from "@/lib/engine/availability";
+import { createReservation } from "@/lib/api/reservations";
+import { expandDateRange } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,17 +41,53 @@ type Props = {
   onReset: () => void; 
   isDirty: boolean;
   setSavedSnapshot: (snap: CalendarState) => void;
+  onReservationCreated?: (ev: { 
+    id: string; 
+    start: string; 
+    end: string; 
+    allDay: boolean; 
+    title: string; 
+    classNames?: string[] 
+  }) => void;
 };
 
 
+
 export default function HeaderBar({
-  cal, setCal, addMode, setAddMode, view, setView, catalog, loadingCatalog, onSave, onReset, isDirty, setSavedSnapshot
+  cal, setCal, addMode, setAddMode, view, setView, catalog, loadingCatalog, onSave, onReset, isDirty, setSavedSnapshot, onReservationCreated
 }: Props) {
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [unitId, setUnitId] = useState<string>("");
   // Local state for test drawer
   const [testOpen, setTestOpen] = useState(false);
   const [testStart, setTestStart] = useState("");
   const [testEnd, setTestEnd] = useState("");
   const [testResult, setTestResult] = useState<{ ok: boolean; reasons: string[] } | null>(null);
+
+  const [quote, setQuote] = useState<{
+    ok: boolean;
+    reasons: string[];
+    unit?: Unit;
+    calendarId?: string;
+    nights?: number;
+    rate?: number;
+    currency?: string;
+    cancelHours?: number;
+    cancelFee?: number;
+  } | null>(null);
+
+   useEffect(() => {
+    // load once
+    (async () => {
+      try {
+        const list = await fetchAllUnits();
+        setUnits(list);
+        if (list.length) setUnitId(String(list[0]._id));
+      } catch {}
+    })();
+  }, []);
+
+   const selectedUnit = units.find(u => String(u._id) === unitId);
 
   return (
     <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3">
@@ -231,60 +274,152 @@ export default function HeaderBar({
         </Select>
 
         {/* Test Sheet */}
-        <Sheet open={testOpen} onOpenChange={setTestOpen}>
-          <SheetTrigger asChild>
-            <Button variant="default" size="sm" className="ml-2 gap-1"><TestTube2 className="h-4 w-4" /> Test</Button>
-          </SheetTrigger>
-          <SheetContent side="right" className="w-[360px]">
-            <SheetHeader><SheetTitle>Test Booking</SheetTitle></SheetHeader>
-            <div className="mt-4 space-y-3">
-              <div>
-                <Label className="text-xs">Mode</Label>
-                <Select value={cal.category} onValueChange={(v: CalendarCategory) => setCal({ ...cal, category: v })}>
-                  <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="reservations">Reservations</SelectItem>
-                    <SelectItem value="appointments">Appointments</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Start (yyyy-mm-dd)</Label>
-                <Input value={testStart} onChange={(e) => setTestStart(e.target.value)} placeholder="2025-09-15" className="h-8" />
-              </div>
-              {cal.category === "reservations" && (
-                <div>
-                  <Label className="text-xs">End (yyyy-mm-dd)</Label>
-                  <Input value={testEnd} onChange={(e) => setTestEnd(e.target.value)} placeholder="2025-09-18" className="h-8" />
+         <Sheet open={testOpen} onOpenChange={(o) => { setTestOpen(o); if (!o) { setQuote(null); setTestResult(null); } }}>
+      <SheetTrigger asChild>
+        <Button variant="default" size="sm" className="ml-2 gap-1"><TestTube2 className="h-4 w-4" /> Test</Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-[360px]">
+        <SheetHeader><SheetTitle>Reserve Unit</SheetTitle></SheetHeader>
+
+        <div className="mt-4 space-y-3">
+          {/* Pick unit */}
+          <div>
+            <Label className="text-xs">Unit</Label>
+            <Select value={unitId} onValueChange={setUnitId}>
+              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {units.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No units</div>}
+                {units.map(u => (
+                  <SelectItem key={String(u._id)} value={String(u._id)}>
+                    {u.name}{u.unitNumber ? ` #${u.unitNumber}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Dates */}
+          <div>
+            <Label className="text-xs">Start (yyyy-mm-dd)</Label>
+            <Input value={testStart} onChange={(e) => setTestStart(e.target.value)} placeholder="2025-09-15" className="h-8" />
+          </div>
+          <div>
+            <Label className="text-xs">End (yyyy-mm-dd)</Label>
+            <Input value={testEnd} onChange={(e) => setTestEnd(e.target.value)} placeholder="2025-09-18" className="h-8" />
+          </div>
+
+          {/* Check availability */}
+          <Button
+            onClick={async () => {
+              setQuote(null);
+              setTestResult(null);
+              if (!selectedUnit || !testStart || !testEnd) return;
+
+              const avail = await checkUnitAvailability(selectedUnit, testStart, testEnd);
+              setTestResult({ ok: avail.ok, reasons: avail.reasons });
+
+              if (avail.ok && avail.cal && avail.calendarId) {
+                const rate = selectedUnit.rate || 0;
+                setQuote({
+                  ok: true,
+                  reasons: [],
+                  unit: selectedUnit,
+                  calendarId: avail.calendarId,
+                  nights: avail.nights,
+                  rate,
+                  currency: avail.cal.currency,
+                  cancelHours: avail.cal.cancelHours,
+                  cancelFee: avail.cal.cancelFee,
+                });
+              }
+            }}
+            className="w-full"
+          >
+            Check
+          </Button>
+
+          {/* Result / reasons */}
+          {testResult && (
+            <Card>
+              <CardContent className="pt-4">
+                <div className={`font-medium ${testResult.ok ? "text-green-600" : "text-red-600"}`}>
+                  {testResult.ok ? "Available" : "Unavailable"}
                 </div>
-              )}
-              <Button
-                onClick={() => {
-                  const end = cal.category === "reservations" ? (testEnd || testStart) : undefined;
-                  const res = evaluateBookingRequest(cal, { start: testStart, end, mode: cal.category });
-                  setTestResult(res);
-                }}
-                className="w-full"
-              >
-                Submit
-              </Button>
-              {testResult && (
-                <Card>
-                  <CardContent className="pt-4">
-                    <div className={`font-medium ${testResult.ok ? "text-green-600" : "text-red-600"}`}>
-                      {testResult.ok ? "Approved" : "Rejected"}
-                    </div>
-                    {!testResult.ok && (
-                      <ul className="mt-2 list-disc pl-5 text-sm">
-                        {testResult.reasons.map((r, i) => <li key={i}>{r}</li>)}
-                      </ul>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </SheetContent>
-        </Sheet>
+                {!testResult.ok && (
+                  <ul className="mt-2 list-disc pl-5 text-sm">
+                    {testResult.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Quote + Confirm */}
+          {quote?.ok && quote.unit && (
+            <Card>
+              <CardContent className="pt-4 space-y-2">
+                <div className="font-medium">Quote</div>
+                <div className="text-sm">
+                  <div>Unit: <span className="font-medium">{quote.unit.name}{quote.unit.unitNumber ? ` #${quote.unit.unitNumber}` : ""}</span></div>
+                  <div>Dates: <span className="font-medium">{testStart} → {testEnd}</span> ({quote.nights} night{(quote.nights ?? 1) > 1 ? "s" : ""})</div>
+                  <div>Rate: <span className="font-medium">{quote.currency} {quote.rate?.toFixed(2)}</span> / night</div>
+                  <div>Total: <span className="font-medium">{quote.currency} {((quote.rate ?? 0) * (quote.nights ?? 1)).toFixed(2)}</span></div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Cancellation: {quote.cancelHours}h notice, fee {quote.currency} {quote.cancelFee?.toFixed(2)}
+                  </div>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" className="flex-1" onClick={() => setQuote(null)}>Cancel</Button>
+                  <Button
+                    className="flex-1"
+                    onClick={async () => {
+                      if (!quote || !quote.calendarId) return;
+                      const nights = quote.nights ?? 1;
+
+                      const payload: Reservation = {
+                        unitId: String(quote.unit!._id),
+                        unitName: quote.unit!.name,
+                        unitNumber: quote.unit!.unitNumber,
+                        calendarId: quote.calendarId,
+                        start: testStart,
+                        end: testEnd,
+                        nights,
+                        rate: quote.rate ?? 0,
+                        currency: quote.currency ?? "USD",
+                        cancelHours: quote.cancelHours ?? 48,
+                        cancelFee: quote.cancelFee ?? 0,
+                        status: "confirmed",
+                      };
+
+                      const saved = await createReservation(payload);
+
+                      // add a pill to the visible calendar immediately
+                      const endExclusive = addDaysYMD(saved.end, 1);
+                      const title = `${saved.unitName}${saved.unitNumber ? ` #${saved.unitNumber}` : ""}`;
+
+                      onReservationCreated?.({
+                        id: `res-${saved._id}`,
+                        start: saved.start,
+                        end: endExclusive, // FullCalendar allDay expects end-exclusive
+                        allDay: true,
+                        title,
+                        classNames: ["fc-reservation-pill"],
+                      });
+
+                      setQuote(null);
+                      setTestOpen(false);
+                    }}
+                  >
+                    Confirm
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
 
         <Button
           variant={isDirty ? "default" : "outline"}

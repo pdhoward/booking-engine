@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { UploadCloud, RotateCcw } from "lucide-react";
 
+import type { EventInput } from "@fullcalendar/core";
 import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
 import { fetchAllCalendars, saveCalendar } from "@/lib/api/calendars";
 
@@ -27,6 +28,8 @@ export default function BookingEnginePage() {
     blackouts: [], holidays: [], minStayByWeekday: {}, seasons: [],
     leadTime: { minDays: 0, maxDays: 365 }, rulesJson: "[]",
   }));
+
+  const [reservationEvents, setReservationEvents] = useState<EventInput[]>([]);
 
   const [view, setView] = useState<"dayGridMonth" | "timeGridWeek" | "timeGridDay" | "multiMonthYear">("dayGridMonth");
   const [addMode, setAddMode] = useState<"cursor" | "blackout" | "holiday">("cursor");
@@ -115,7 +118,8 @@ export default function BookingEnginePage() {
           onSave={handleSave}
           onReset={resetToNew}
           isDirty={isDirty}                     
-          setSavedSnapshot={setSavedSnapshot}   
+          setSavedSnapshot={setSavedSnapshot}  
+          onReservationCreated={(ev) => setReservationEvents((p) => [...p, ev])} 
         />
       </header>
 
@@ -126,7 +130,13 @@ export default function BookingEnginePage() {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           <Card className="lg:col-span-3">
             <CardContent className="p-2 md:p-4">
-              <CalendarGrid cal={cal} setCal={setCal} view={view} addMode={addMode} />
+               <CalendarGrid
+                cal={cal}
+                setCal={setCal}
+                view={view}
+                addMode={addMode}               
+                reservationEvents={reservationEvents}
+              />
             </CardContent>
           </Card>
 
