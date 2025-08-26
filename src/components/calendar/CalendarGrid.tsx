@@ -1,7 +1,7 @@
 "use client";
 
 // What: Encapsulates FullCalendar init/update and event building.
-// Props: calendar state, mode, and view are controlled by the parent.
+// Props: calendar state, mode, view, and optional reservation pills.
 
 import React, { useEffect, useMemo, useRef } from "react";
 import { Calendar as FC_Calendar, type EventInput } from "@fullcalendar/core";
@@ -18,14 +18,21 @@ type Props = {
   setCal: React.Dispatch<React.SetStateAction<CalendarState>>;
   view: "dayGridMonth" | "timeGridWeek" | "timeGridDay" | "multiMonthYear";
   addMode: "cursor" | "blackout" | "holiday";
+  /** Foreground reservation pills to paint on the grid */
   reservationEvents?: EventInput[];
 };
 
-export default function CalendarGrid({ cal, setCal, view, addMode, reservationEvents=[] }: Props) {
+export default function CalendarGrid({
+  cal,
+  setCal,
+  view,
+  addMode,
+  reservationEvents = [],
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fcRef = useRef<FC_Calendar | null>(null);
 
-  // Build events (foreground holidays, background blackouts)
+  // Build events (foreground holidays + reservations, background blackouts)
   const events: EventInput[] = useMemo(() => {
     const blackoutEvents = cal.blackouts.map((iso) => ({
       id: `blackout-${iso}`,
@@ -43,20 +50,32 @@ export default function CalendarGrid({ cal, setCal, view, addMode, reservationEv
       display: "block",
       title: `Holiday (min ${h.minNights})`,
       classNames: ["fc-holiday-pill"],
+      extendedProps: { z: 10 }, // layer below reservations
+    }));
+
+    // Normalize inbound reservation pills so they're always visible & styled
+    const reservationPills = (reservationEvents ?? []).map((ev) => ({
+      allDay: true,
+      display: "block",
+      classNames: ["fc-reservation-pill", ...(ev.classNames ?? [])],
+      extendedProps: { ...(ev.extendedProps || {}), z: 20 }, // above holidays
+      ...ev,
     }));
 
     const rruleEvent = cal.recurringBlackouts
-      ? [{
-          id: "recurring-blackout",
-          rrule: cal.recurringBlackouts,
-          duration: { days: 1 },
-          display: "background",
-          color: "#3f3f3f55",
-          title: "Recurring Blackout",
-        }]
+      ? [
+          {
+            id: "recurring-blackout",
+            rrule: cal.recurringBlackouts,
+            duration: { days: 1 },
+            display: "background",
+            color: "#3f3f3f55",
+            title: "Recurring Blackout",
+          } as EventInput,
+        ]
       : [];
 
-     return [...blackoutEvents, ...holidayEvents, ...rruleEvent, ...reservationEvents];
+    return [...blackoutEvents, ...holidayEvents, ...rruleEvent, ...reservationPills];
   }, [cal.blackouts, cal.holidays, cal.recurringBlackouts, reservationEvents]);
 
   // Create once / destroy on unmount
@@ -77,6 +96,9 @@ export default function CalendarGrid({ cal, setCal, view, addMode, reservationEv
       selectMirror: true,
       longPressDelay: 180,
       selectMinDistance: 8,
+      // Foreground layering: smaller z first → larger z on top
+      eventOrder: (a: any, b: any) =>
+        ((a.extendedProps as any)?.z ?? 0) - ((b.extendedProps as any)?.z ?? 0),
     });
 
     fc.render();
@@ -105,13 +127,16 @@ export default function CalendarGrid({ cal, setCal, view, addMode, reservationEv
         if (!start || !end) return;
 
         if (addMode === "blackout") {
-          setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, ...expandDateRange(start, end)]) }));
+          setCal((p) => ({
+            ...p,
+            blackouts: unique([...p.blackouts, ...expandDateRange(start, end)]),
+          }));
         } else if (addMode === "holiday") {
           setCal((p) => {
-            const seen = new Set(p.holidays.map(h => h.date));
+            const seen = new Set(p.holidays.map((h) => h.date));
             const toAdd = expandDateRange(start, end)
-              .filter(d => !seen.has(d))
-              .map(d => ({ date: d, minNights: 1 }));
+              .filter((d) => !seen.has(d))
+              .map((d) => ({ date: d, minNights: 1 }));
             return { ...p, holidays: [...p.holidays, ...toAdd] };
           });
         }
@@ -124,7 +149,11 @@ export default function CalendarGrid({ cal, setCal, view, addMode, reservationEv
         if (addMode === "blackout") {
           setCal((p) => ({ ...p, blackouts: unique([...p.blackouts, iso]) }));
         } else if (addMode === "holiday") {
-          setCal((p) => (p.holidays.some(h => h.date === iso) ? p : { ...p, holidays: [...p.holidays, { date: iso, minNights: 1 }] }));
+          setCal((p) =>
+            p.holidays.some((h) => h.date === iso)
+              ? p
+              : { ...p, holidays: [...p.holidays, { date: iso, minNights: 1 }] }
+          );
         }
       });
 
@@ -140,6 +169,7 @@ export default function CalendarGrid({ cal, setCal, view, addMode, reservationEv
         } else if (info.event.id === "recurring-blackout") {
           setCal((p) => ({ ...p, recurringBlackouts: undefined }));
         }
+        // NOTE: reservation pills are not removed by clicks here.
       });
     });
 

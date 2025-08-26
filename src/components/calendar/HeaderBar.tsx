@@ -1,19 +1,12 @@
 "use client";
 
-// What: Top navbar actions (meta dropdown, calendar picker, mode toggles,
-//       view switch, test sheet, save). Shows active name/version badge.
-
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
-import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
-import { fetchCalendarById } from "@/lib/api/calendars";
-
 import type { Unit } from "@/types/unit";
-import type { Reservation } from "@/types/reservation";
+import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
+import { fetchUnitById } from "@/lib/api/units";
+import { fetchCalendarById } from "@/lib/api/calendars";
 import { fetchAllUnits } from "@/lib/api/units";
-import { checkUnitAvailability, addDaysYMD } from "@/lib/engine/availability";
-import { createReservation } from "@/lib/api/reservations";
-import { expandDateRange } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,8 +18,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-
 import { Calendar as CalendarIcon, Plus, Save, RefreshCcw, Database, ChevronDown, Eye, Ban, Sparkles, Power, Lock, TestTube2 } from "lucide-react";
+
+import type { EventInput } from "@fullcalendar/core";
 
 type Props = {
   cal: CalendarState;
@@ -38,56 +32,223 @@ type Props = {
   catalog: CatalogRow[];
   loadingCatalog: boolean;
   onSave: () => Promise<void>;
-  onReset: () => void; 
+  onReset: () => void;
   isDirty: boolean;
   setSavedSnapshot: (snap: CalendarState) => void;
-  onReservationCreated?: (ev: { 
-    id: string; 
-    start: string; 
-    end: string; 
-    allDay: boolean; 
-    title: string; 
-    classNames?: string[] 
-  }) => void;
+
+  /** optional: parent can use this to push a reservation pill into the calendar */
+  onReservationCreated?: (ev: EventInput) => void;
 };
 
+// ---- helpers only used by the test sheet ----
+const toMidnightUTC = (isoYmd: string) => new Date(`${isoYmd}T00:00:00Z`);
 
+const ymdUTC = (d: Date) =>
+  new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+    .toISOString()
+    .slice(0, 10);
+
+const toYMD = (d: Date | string) => {
+  const x = typeof d === "string" ? new Date(d) : d;
+  return new Date(Date.UTC(x.getFullYear(), x.getMonth(), x.getDate()))
+    .toISOString()
+    .slice(0, 10);
+};
+
+function pickCalendarLinkForStart(
+  links: { effectiveDate: string }[],
+  startYmd: string
+) {
+  const start = toMidnightUTC(startYmd);
+  const eligible = links.filter((l) => toMidnightUTC(l.effectiveDate) <= start);
+  if (!eligible.length) return null;
+  eligible.sort(
+    (a, b) =>
+      toMidnightUTC(a.effectiveDate).getTime() -
+      toMidnightUTC(b.effectiveDate).getTime()
+  );
+  return eligible[eligible.length - 1]; // latest <= start
+}
+
+function nightsBetween(startYmd: string, endYmd: string) {
+  const s = toMidnightUTC(startYmd).getTime();
+  const e = toMidnightUTC(endYmd).getTime();
+  const n = Math.max(1, Math.round((e - s) / 86400000) || 1);
+  return n;
+}
 
 export default function HeaderBar({
-  cal, setCal, addMode, setAddMode, view, setView, catalog, loadingCatalog, onSave, onReset, isDirty, setSavedSnapshot, onReservationCreated
+  cal,
+  setCal,
+  addMode,
+  setAddMode,
+  view,
+  setView,
+  catalog,
+  loadingCatalog,
+  onSave,
+  onReset,
+  isDirty,
+  setSavedSnapshot,
+  onReservationCreated,
 }: Props) {
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [unitId, setUnitId] = useState<string>("");
-  // Local state for test drawer
+  // ---- test drawer state ----
   const [testOpen, setTestOpen] = useState(false);
+
+  // unit selection (by _id)
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [loadingUnits, setLoadingUnits] = useState(true);
+  const [selectedUnitId, setSelectedUnitId] = useState<string>("");
+
+  // booking inputs
   const [testStart, setTestStart] = useState("");
   const [testEnd, setTestEnd] = useState("");
+
+  // result state
   const [testResult, setTestResult] = useState<{ ok: boolean; reasons: string[] } | null>(null);
+  const [chosenUnit, setChosenUnit] = useState<Unit | null>(null);
+  const [chosenCalendarInfo, setChosenCalendarInfo] = useState<{ name: string; version: number } | null>(null);
+  const [quotedTotal, setQuotedTotal] = useState<number | null>(null);
 
-  const [quote, setQuote] = useState<{
-    ok: boolean;
-    reasons: string[];
-    unit?: Unit;
-    calendarId?: string;
-    nights?: number;
-    rate?: number;
-    currency?: string;
-    cancelHours?: number;
-    cancelFee?: number;
-  } | null>(null);
-
-   useEffect(() => {
-    // load once
+  // load units (for unit picker)
+  useEffect(() => {
     (async () => {
+      setLoadingUnits(true);
       try {
         const list = await fetchAllUnits();
         setUnits(list);
-        if (list.length) setUnitId(String(list[0]._id));
-      } catch {}
+      } finally {
+        setLoadingUnits(false);
+      }
     })();
   }, []);
 
-   const selectedUnit = units.find(u => String(u._id) === unitId);
+  // submit booking availability check  
+  const handleCheckAvailability = async () => {
+    setTestResult(null);
+    setChosenUnit(null);
+    setChosenCalendarInfo(null);
+    setQuotedTotal(null);
+
+    // 1) Validate input
+    const unitBrief = units.find((u) => String(u._id) === selectedUnitId);
+    if (!unitBrief) {
+      setTestResult({ ok: false, reasons: ["Please choose a unit."] });
+      return;
+    }
+    if (!testStart) {
+      setTestResult({ ok: false, reasons: ["Start date is required."] });
+      return;
+    }
+
+    const mode: CalendarCategory = cal.category; // or "reservations"
+    const startYmd = toYMD(testStart);
+    const endYmd = mode === "reservations" ? toYMD(testEnd || testStart) : startYmd;
+
+    // 2) Fetch the full unit to ensure calendars are present & normalized
+    //    (falls back to local if fetch fails)
+    let unit = await fetchUnitById(String(unitBrief._id)).catch(() => null);
+    unit = unit ?? unitBrief;
+
+    const links = (unit.calendars ?? []).map((l: any) => ({
+      calendarId: String(l.calendarId),
+      name: String(l.name ?? ""),
+      version: Number(l.version ?? 1),
+      effectiveDate: toYMD(l.effectiveDate), // normalize
+    }));
+
+    if (links.length === 0) {
+      setTestResult({ ok: false, reasons: ["This unit has no linked calendars."] });
+      return;
+    }
+
+    // 3) Pick the applicable calendar: latest link with effectiveDate <= start
+    const startMs = Date.parse(startYmd);
+    const eligible = links
+      .filter((l) => Number.isFinite(Date.parse(l.effectiveDate)) && Date.parse(l.effectiveDate) <= startMs)
+      .sort((a, b) => Date.parse(a.effectiveDate) - Date.parse(b.effectiveDate));
+
+    const applicable = eligible.at(-1);
+
+    if (!applicable) {
+      // show the earliest future effective date (or — if none)
+      const future = links
+        .map((l) => Date.parse(l.effectiveDate))
+        .filter((ms) => Number.isFinite(ms) && ms > startMs)
+        .sort((a, b) => a - b)[0];
+
+      const futureYmd = future ? new Date(future).toISOString().slice(0, 10) : "—";
+      setTestResult({
+        ok: false,
+        reasons: [`No applicable calendar for ${startYmd}. Available from: ${futureYmd}.`],
+      });
+      return;
+    }
+
+    // 4) Fetch the selected calendar & evaluate rules
+    const theCal = await fetchCalendarById(applicable.calendarId);
+    if (!theCal) {
+      setTestResult({ ok: false, reasons: ["Linked calendar not found."] });
+      return;
+    }
+
+    const res = evaluateBookingRequest(theCal, { start: startYmd, end: endYmd, mode });
+
+    // 5) Update UI state (unit + cal info always set)
+    setChosenUnit(unit);
+    setChosenCalendarInfo({ name: theCal.name, version: theCal.version });
+
+    if (!res.ok) {
+      setTestResult(res);
+      return;
+    }
+
+    // 6) Quote (simple): nightly rate × nights (reservations) or flat (appointments)
+    const nights = mode === "reservations" ? nightsBetween(startYmd, endYmd) : 1;
+    const total = (unit.rate || 0) * nights;
+    setQuotedTotal(total);
+
+    // enrich success with policy details
+    setTestResult({
+      ok: true,
+      reasons: [
+        `Rate: ${unit.currency} ${total} (${nights} night${nights > 1 ? "s" : ""})`,
+        `Cancel: ${theCal.cancelHours}h notice, fee ${theCal.currency} ${theCal.cancelFee}`,
+        `Calendar: ${applicable.name} v${applicable.version} (eff ${applicable.effectiveDate})`,
+      ],
+    });
+  };
+
+
+  // confirm booking (client-side “stage” only; hand-off to API as needed)
+  const handleConfirm = async () => {
+    if (!testResult?.ok || !chosenUnit) return;
+    const startYmd = testStart;
+    const endYmd = cal.category === "reservations" ? (testEnd || testStart) : testStart;
+
+    // Optional: persist via /api/reservations; for now we just create a calendar pill
+    const ev: EventInput = {
+      id: `resv-${chosenUnit._id}-${startYmd}`,
+      start: startYmd,
+      end: ymdUTC(new Date(toMidnightUTC(endYmd).getTime() + 86400000)), // exclusive end for all-day span
+      allDay: true,
+      display: "block",
+      title: `${chosenUnit.name}${chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}`,
+      classNames: ["fc-reservation-pill"],
+    };
+    onReservationCreated?.(ev);
+
+    // Close drawer & reset local result
+    setTestOpen(false);
+    setTestResult(null);
+  };
+
+  const handleCancelQuote = () => {
+    setTestResult(null);
+    setChosenUnit(null);
+    setChosenCalendarInfo(null);
+    setQuotedTotal(null);
+  };
 
   return (
     <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3">
@@ -115,7 +276,7 @@ export default function HeaderBar({
       </div>
 
       <div className="flex items-center gap-2">
-        {/* Meta dropdown (name/owner/etc.) */}
+        {/* Meta dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="gap-1 text-xs">
@@ -127,11 +288,19 @@ export default function HeaderBar({
             <div className="grid grid-cols-2 gap-2 mt-2">
               <div className="col-span-2">
                 <Label className="text-xs">Name</Label>
-                <Input value={cal.name} onChange={(e) => setCal({ ...cal, name: e.target.value })} placeholder="e.g. Cypress Main" className="h-8" />
+                <Input
+                  value={cal.name}
+                  onChange={(e) => setCal({ ...cal, name: e.target.value })}
+                  placeholder="e.g. Cypress Main"
+                  className="h-8"
+                />
               </div>
               <div>
                 <Label className="text-xs">Category</Label>
-                <Select value={cal.category} onValueChange={(v: CalendarCategory) => setCal({ ...cal, category: v })}>
+                <Select
+                  value={cal.category}
+                  onValueChange={(v: CalendarCategory) => setCal({ ...cal, category: v })}
+                >
                   <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="reservations">Reservations</SelectItem>
@@ -145,15 +314,29 @@ export default function HeaderBar({
               </div>
               <div>
                 <Label className="text-xs">Currency</Label>
-                <Input value={cal.currency} onChange={(e) => setCal({ ...cal, currency: e.target.value.toUpperCase() })} className="h-8" />
+                <Input
+                  value={cal.currency}
+                  onChange={(e) => setCal({ ...cal, currency: e.target.value.toUpperCase() })}
+                  className="h-8"
+                />
               </div>
               <div>
                 <Label className="text-xs">Cancel Notice (hrs)</Label>
-                <Input type="number" value={cal.cancelHours} onChange={(e) => setCal({ ...cal, cancelHours: +e.target.value || 0 })} className="h-8" />
+                <Input
+                  type="number"
+                  value={cal.cancelHours}
+                  onChange={(e) => setCal({ ...cal, cancelHours: +e.target.value || 0 })}
+                  className="h-8"
+                />
               </div>
               <div>
                 <Label className="text-xs">Cancel Fee</Label>
-                <Input type="number" value={cal.cancelFee} onChange={(e) => setCal({ ...cal, cancelFee: +e.target.value || 0 })} className="h-8" />
+                <Input
+                  type="number"
+                  value={cal.cancelFee}
+                  onChange={(e) => setCal({ ...cal, cancelFee: +e.target.value || 0 })}
+                  className="h-8"
+                />
               </div>
               <div className="flex items-center justify-between col-span-2 mt-2">
                 <div className="flex items-center gap-2">
@@ -171,7 +354,7 @@ export default function HeaderBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Existing calendars dropdown (scrollable list, active-first, show version + state) */}
+        {/* Existing calendars dropdown (unchanged) */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="gap-1 text-xs">
@@ -193,9 +376,9 @@ export default function HeaderBar({
                 {[...catalog]
                   .sort(
                     (a, b) =>
-                      Number(b.active) - Number(a.active) || // active first
-                      b.version - a.version ||               // newest version
-                      a.name.localeCompare(b.name)           // then by name
+                      Number(b.active) - Number(a.active) ||
+                      b.version - a.version ||
+                      a.name.localeCompare(b.name)
                   )
                   .map((c) => (
                     <DropdownMenuItem
@@ -204,7 +387,7 @@ export default function HeaderBar({
                         const full = await fetchCalendarById(c._id);
                         if (full) {
                           setCal(full);
-                          setSavedSnapshot(full);   // after selecting an existing calendar - all in sync
+                          setSavedSnapshot(full);
                         }
                       }}
                       className="justify-between gap-2"
@@ -237,25 +420,47 @@ export default function HeaderBar({
         {/* Mode toggles */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant={addMode === "cursor" ? "default" : "ghost"} size="icon" onClick={() => setAddMode("cursor")}><Eye className="h-4 w-4" /></Button>
+            <Button
+              variant={addMode === "cursor" ? "default" : "ghost"}
+              size="icon"
+              onClick={() => setAddMode("cursor")}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Cursor</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant={addMode === "blackout" ? "default" : "ghost"} size="icon" onClick={() => setAddMode(addMode === "blackout" ? "cursor" : "blackout")}><Ban className="h-4 w-4" /></Button>
+            <Button
+              variant={addMode === "blackout" ? "default" : "ghost"}
+              size="icon"
+              onClick={() => setAddMode(addMode === "blackout" ? "cursor" : "blackout")}
+            >
+              <Ban className="h-4 w-4" />
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Blackout Mode</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant={addMode === "holiday" ? "default" : "ghost"} size="icon" onClick={() => setAddMode(addMode === "holiday" ? "cursor" : "holiday")}><Sparkles className="h-4 w-4" /></Button>
+            <Button
+              variant={addMode === "holiday" ? "default" : "ghost"}
+              size="icon"
+              onClick={() => setAddMode(addMode === "holiday" ? "cursor" : "holiday")}
+            >
+              <Sparkles className="h-4 w-4" />
+            </Button>
           </TooltipTrigger>
           <TooltipContent>Holiday Mode</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={() => setCal((p) => ({ ...p, active: !p.active }))}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setCal((p) => ({ ...p, active: !p.active }))}
+            >
               {cal.active ? <Power className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
             </Button>
           </TooltipTrigger>
@@ -273,153 +478,112 @@ export default function HeaderBar({
           </SelectContent>
         </Select>
 
-        {/* Test Sheet */}
-         <Sheet open={testOpen} onOpenChange={(o) => { setTestOpen(o); if (!o) { setQuote(null); setTestResult(null); } }}>
-      <SheetTrigger asChild>
-        <Button variant="default" size="sm" className="ml-2 gap-1"><TestTube2 className="h-4 w-4" /> Test</Button>
-      </SheetTrigger>
-      <SheetContent side="right" className="w-[360px]">
-        <SheetHeader><SheetTitle>Reserve Unit</SheetTitle></SheetHeader>
+        {/* Test Sheet (upgraded) */}
+        <Sheet open={testOpen} onOpenChange={setTestOpen}>
+          <SheetTrigger asChild>
+            <Button variant="default" size="sm" className="ml-2 gap-1">
+              <TestTube2 className="h-4 w-4" /> Test
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="right" className="w-[380px]">
+            <SheetHeader><SheetTitle>Test Booking</SheetTitle></SheetHeader>
+            <div className="mt-4 space-y-3">
+              {/* pick unit by _id */}
+              <div>
+                <Label className="text-xs">Unit</Label>
+                <Select value={selectedUnitId} onValueChange={setSelectedUnitId}>
+                  <SelectTrigger className="h-8"><SelectValue placeholder="Choose unit" /></SelectTrigger>
+                  <SelectContent>
+                    {loadingUnits && <div className="px-2 py-1 text-xs text-muted-foreground">Loading…</div>}
+                    {!loadingUnits && units.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No units</div>}
+                    {!loadingUnits && units.map((u) => (
+                      <SelectItem key={String(u._id)} value={String(u._id)}>
+                        {u.name}{u.unitNumber ? ` #${u.unitNumber}` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-        <div className="mt-4 space-y-3">
-          {/* Pick unit */}
-          <div>
-            <Label className="text-xs">Unit</Label>
-            <Select value={unitId} onValueChange={setUnitId}>
-              <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {units.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No units</div>}
-                {units.map(u => (
-                  <SelectItem key={String(u._id)} value={String(u._id)}>
-                    {u.name}{u.unitNumber ? ` #${u.unitNumber}` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+              <div>
+                <Label className="text-xs">Mode</Label>
+                <Select value={cal.category} onValueChange={(v: CalendarCategory) => setCal({ ...cal, category: v })}>
+                  <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="reservations">Reservations</SelectItem>
+                    <SelectItem value="appointments">Appointments</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-          {/* Dates */}
-          <div>
-            <Label className="text-xs">Start (yyyy-mm-dd)</Label>
-            <Input value={testStart} onChange={(e) => setTestStart(e.target.value)} placeholder="2025-09-15" className="h-8" />
-          </div>
-          <div>
-            <Label className="text-xs">End (yyyy-mm-dd)</Label>
-            <Input value={testEnd} onChange={(e) => setTestEnd(e.target.value)} placeholder="2025-09-18" className="h-8" />
-          </div>
+              <div>
+                <Label className="text-xs">Start (yyyy-mm-dd)</Label>
+                <Input value={testStart} onChange={(e) => setTestStart(e.target.value)} placeholder="2025-08-29" className="h-8" />
+              </div>
 
-          {/* Check availability */}
-          <Button
-            onClick={async () => {
-              setQuote(null);
-              setTestResult(null);
-              if (!selectedUnit || !testStart || !testEnd) return;
-
-              const avail = await checkUnitAvailability(selectedUnit, testStart, testEnd);
-              setTestResult({ ok: avail.ok, reasons: avail.reasons });
-
-              if (avail.ok && avail.cal && avail.calendarId) {
-                const rate = selectedUnit.rate || 0;
-                setQuote({
-                  ok: true,
-                  reasons: [],
-                  unit: selectedUnit,
-                  calendarId: avail.calendarId,
-                  nights: avail.nights,
-                  rate,
-                  currency: avail.cal.currency,
-                  cancelHours: avail.cal.cancelHours,
-                  cancelFee: avail.cal.cancelFee,
-                });
-              }
-            }}
-            className="w-full"
-          >
-            Check
-          </Button>
-
-          {/* Result / reasons */}
-          {testResult && (
-            <Card>
-              <CardContent className="pt-4">
-                <div className={`font-medium ${testResult.ok ? "text-green-600" : "text-red-600"}`}>
-                  {testResult.ok ? "Available" : "Unavailable"}
+              {cal.category === "reservations" && (
+                <div>
+                  <Label className="text-xs">End (yyyy-mm-dd)</Label>
+                  <Input value={testEnd} onChange={(e) => setTestEnd(e.target.value)} placeholder="2025-08-30" className="h-8" />
                 </div>
-                {!testResult.ok && (
-                  <ul className="mt-2 list-disc pl-5 text-sm">
-                    {testResult.reasons.map((r, i) => <li key={i}>{r}</li>)}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          )}
+              )}
 
-          {/* Quote + Confirm */}
-          {quote?.ok && quote.unit && (
-            <Card>
-              <CardContent className="pt-4 space-y-2">
-                <div className="font-medium">Quote</div>
-                <div className="text-sm">
-                  <div>Unit: <span className="font-medium">{quote.unit.name}{quote.unit.unitNumber ? ` #${quote.unit.unitNumber}` : ""}</span></div>
-                  <div>Dates: <span className="font-medium">{testStart} → {testEnd}</span> ({quote.nights} night{(quote.nights ?? 1) > 1 ? "s" : ""})</div>
-                  <div>Rate: <span className="font-medium">{quote.currency} {quote.rate?.toFixed(2)}</span> / night</div>
-                  <div>Total: <span className="font-medium">{quote.currency} {((quote.rate ?? 0) * (quote.nights ?? 1)).toFixed(2)}</span></div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    Cancellation: {quote.cancelHours}h notice, fee {quote.currency} {quote.cancelFee?.toFixed(2)}
-                  </div>
-                </div>
+              <Button onClick={handleCheckAvailability} className="w-full">Check availability</Button>
 
-                <div className="flex gap-2 pt-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setQuote(null)}>Cancel</Button>
-                  <Button
-                    className="flex-1"
-                    onClick={async () => {
-                      if (!quote || !quote.calendarId) return;
-                      const nights = quote.nights ?? 1;
+              {/* Outcome */}
+              {testResult && (
+                <Card>
+                  <CardContent className="pt-4 space-y-2">
+                    <div className={`font-medium ${testResult.ok ? "text-green-600" : "text-red-600"}`}>
+                      {testResult.ok ? "Available" : "Unavailable"}
+                    </div>
 
-                      const payload: Reservation = {
-                        unitId: String(quote.unit!._id),
-                        unitName: quote.unit!.name,
-                        unitNumber: quote.unit!.unitNumber,
-                        calendarId: quote.calendarId,
-                        start: testStart,
-                        end: testEnd,
-                        nights,
-                        rate: quote.rate ?? 0,
-                        currency: quote.currency ?? "USD",
-                        cancelHours: quote.cancelHours ?? 48,
-                        cancelFee: quote.cancelFee ?? 0,
-                        status: "confirmed",
-                      };
+                    {/* details on success */}
+                    {testResult.ok && chosenUnit && (
+                      <div className="text-sm space-y-1">
+                        <div>
+                          <span className="font-medium">Unit:</span>{" "}
+                          {chosenUnit.name}{chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}
+                        </div>
+                        <div><span className="font-medium">Dates:</span> {testStart}{cal.category === "reservations" ? ` → ${testEnd || testStart}` : ""}</div>
+                        {chosenCalendarInfo && (
+                          <div className="text-xs text-muted-foreground">
+                            Using calendar: {chosenCalendarInfo.name} (v{chosenCalendarInfo.version})
+                          </div>
+                        )}
+                        <div>
+                          <span className="font-medium">Rate:</span>{" "}
+                          {chosenUnit.currency} {chosenUnit.rate}
+                          {cal.category === "reservations" ? " /night" : ""}
+                        </div>
+                        {quotedTotal !== null && (
+                          <div>
+                            <span className="font-medium">Total:</span>{" "}
+                            {chosenUnit.currency} {quotedTotal}
+                          </div>
+                        )}
+                        <div className="text-xs text-muted-foreground">
+                          Cancellation: {cal.cancelHours}h notice, fee {cal.currency} {cal.cancelFee}
+                        </div>
+                        <div className="flex gap-2 pt-2">
+                          <Button size="sm" onClick={handleConfirm}>Confirm</Button>
+                          <Button size="sm" variant="outline" onClick={handleCancelQuote}>Cancel</Button>
+                        </div>
+                      </div>
+                    )}
 
-                      const saved = await createReservation(payload);
-
-                      // add a pill to the visible calendar immediately
-                      const endExclusive = addDaysYMD(saved.end, 1);
-                      const title = `${saved.unitName}${saved.unitNumber ? ` #${saved.unitNumber}` : ""}`;
-
-                      onReservationCreated?.({
-                        id: `res-${saved._id}`,
-                        start: saved.start,
-                        end: endExclusive, // FullCalendar allDay expects end-exclusive
-                        allDay: true,
-                        title,
-                        classNames: ["fc-reservation-pill"],
-                      });
-
-                      setQuote(null);
-                      setTestOpen(false);
-                    }}
-                  >
-                    Confirm
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
+                    {/* reasons on failure */}
+                    {!testResult.ok && (
+                      <ul className="mt-1 list-disc pl-5 text-sm">
+                        {testResult.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
 
         <Button
           variant={isDirty ? "default" : "outline"}
@@ -436,7 +600,6 @@ export default function HeaderBar({
           <Save className="h-4 w-4 mr-2" />
           {isDirty ? "Save changes" : "Save"}
         </Button>
-
       </div>
     </div>
   );
