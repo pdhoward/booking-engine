@@ -1,13 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
-import type { Unit } from "@/types/unit";
-import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
-import { fetchUnitById } from "@/lib/api/units";
 import { fetchCalendarById } from "@/lib/api/calendars";
-import { fetchAllUnits } from "@/lib/api/units";
-import { createReservation } from "@/lib/api/reservations";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,13 +10,28 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Calendar as CalendarIcon, Plus, Save, RefreshCcw, Database, ChevronDown, Eye, Ban, Sparkles, Power, Lock, TestTube2 } from "lucide-react";
-
-import type { EventInput } from "@fullcalendar/core";
+import {
+  Calendar as CalendarIcon,
+  Plus,
+  Save,
+  RefreshCcw,
+  Database,
+  ChevronDown,
+  Eye,
+  Ban,
+  Sparkles,
+  Power,
+  Lock,
+} from "lucide-react";
 
 type Props = {
   cal: CalendarState;
@@ -36,30 +46,7 @@ type Props = {
   onReset: () => void;
   isDirty: boolean;
   setSavedSnapshot: (snap: CalendarState) => void;
-
-  /** optional: parent can use this to push a reservation pill into the calendar */
-  onReservationCreated?: (ev: EventInput) => void;
 };
-
-// ---- helpers only used by the test sheet ----
-const toMidnightUTC = (isoYmd: string) => new Date(`${isoYmd}T00:00:00Z`);
-
-const toYMD = (d: Date | string) => {
-  const x = typeof d === "string" ? new Date(d) : d;
-  return new Date(Date.UTC(x.getFullYear(), x.getMonth(), x.getDate()))
-    .toISOString()
-    .slice(0, 10);
-};
-
-const addDaysYmd = (ymd: string, days: number) =>
-  toYMD(new Date(Date.parse(ymd) + days * 86400000));
-
-function nightsBetween(startYmd: string, endYmd: string) {
-  const s = toMidnightUTC(startYmd).getTime();
-  const e = toMidnightUTC(endYmd).getTime();
-  const n = Math.max(1, Math.round((e - s) / 86400000) || 1);
-  return n;
-}
 
 export default function HeaderBar({
   cal,
@@ -74,220 +61,7 @@ export default function HeaderBar({
   onReset,
   isDirty,
   setSavedSnapshot,
-  onReservationCreated,
 }: Props) {
-  // ---- test drawer state ----
-  const [testOpen, setTestOpen] = useState(false);
-
-  // unit selection (by _id)
-  const [units, setUnits] = useState<Unit[]>([]);
-  const [loadingUnits, setLoadingUnits] = useState(true);
-  const [selectedUnitId, setSelectedUnitId] = useState<string>("");
-
-  // booking inputs
-  const [testStart, setTestStart] = useState("");
-  const [testEnd, setTestEnd] = useState("");
-
-  // result state
-  const [testResult, setTestResult] = useState<{ ok: boolean; reasons: string[] } | null>(null);
-  const [chosenUnit, setChosenUnit] = useState<Unit | null>(null);
-  const [chosenCalendarInfo, setChosenCalendarInfo] = useState<{ name: string; version: number } | null>(null);
-  const [quotedTotal, setQuotedTotal] = useState<number | null>(null);
-
-  // load units (for unit picker)
-  useEffect(() => {
-    (async () => {
-      setLoadingUnits(true);
-      try {
-        const list = await fetchAllUnits();
-        setUnits(list);
-      } finally {
-        setLoadingUnits(false);
-      }
-    })();
-  }, []);
-
-  // submit booking availability check  
-  const handleCheckAvailability = async () => {
-    setTestResult(null);
-    setChosenUnit(null);
-    setChosenCalendarInfo(null);
-    setQuotedTotal(null);
-
-    // 1) Validate input
-    const unitBrief = units.find((u) => String(u._id) === selectedUnitId);
-    if (!unitBrief) {
-      setTestResult({ ok: false, reasons: ["Please choose a unit."] });
-      return;
-    }
-    if (!testStart) {
-      setTestResult({ ok: false, reasons: ["Start date is required."] });
-      return;
-    }
-
-    const mode: CalendarCategory = cal.category; // or "reservations"
-    const startYmd = toYMD(testStart);
-    const endYmd = mode === "reservations" ? toYMD(testEnd || testStart) : startYmd;
-
-    // 2) Fetch the full unit to ensure calendars are present & normalized
-    //    (falls back to local if fetch fails)
-    let unit = await fetchUnitById(String(unitBrief._id)).catch(() => null);
-    unit = unit ?? unitBrief;
-
-    const links = (unit.calendars ?? []).map((l: any) => ({
-      calendarId: String(l.calendarId),
-      name: String(l.name ?? ""),
-      version: Number(l.version ?? 1),
-      effectiveDate: toYMD(l.effectiveDate), // normalize
-    }));
-
-    if (links.length === 0) {
-      setTestResult({ ok: false, reasons: ["This unit has no linked calendars."] });
-      return;
-    }
-
-    // 3) Pick the applicable calendar: latest link with effectiveDate <= start
-    const startMs = Date.parse(startYmd);
-    const eligible = links
-      .filter((l) => Number.isFinite(Date.parse(l.effectiveDate)) && Date.parse(l.effectiveDate) <= startMs)
-      .sort((a, b) => Date.parse(a.effectiveDate) - Date.parse(b.effectiveDate));
-
-    const applicable = eligible.at(-1);
-
-    if (!applicable) {
-      // show the earliest future effective date (or — if none)
-      const future = links
-        .map((l) => Date.parse(l.effectiveDate))
-        .filter((ms) => Number.isFinite(ms) && ms > startMs)
-        .sort((a, b) => a - b)[0];
-
-      const futureYmd = future ? new Date(future).toISOString().slice(0, 10) : "—";
-      setTestResult({
-        ok: false,
-        reasons: [`No applicable calendar for ${startYmd}. Available from: ${futureYmd}.`],
-      });
-      return;
-    }
-
-    // 4) Fetch the selected calendar & evaluate rules
-    const theCal = await fetchCalendarById(applicable.calendarId);
-    if (!theCal) {
-      setTestResult({ ok: false, reasons: ["Linked calendar not found."] });
-      return;
-    }
-
-    const res = evaluateBookingRequest(theCal, { start: startYmd, end: endYmd, mode });
-
-    // 5) Update UI state (unit + cal info always set)
-    setChosenUnit(unit);
-    setChosenCalendarInfo({ name: theCal.name, version: theCal.version });
-
-    if (!res.ok) {
-      setTestResult(res);
-      return;
-    }
-
-    // 6) Quote (simple): nightly rate × nights (reservations) or flat (appointments)
-    const nights = mode === "reservations" ? nightsBetween(startYmd, endYmd) : 1;
-    const total = (unit.rate || 0) * nights;
-    setQuotedTotal(total);
-
-    // enrich success with policy details
-    setTestResult({
-      ok: true,
-      reasons: [
-        `Rate: ${unit.currency} ${total} (${nights} night${nights > 1 ? "s" : ""})`,
-        `Cancel: ${theCal.cancelHours}h notice, fee ${theCal.currency} ${theCal.cancelFee}`,
-        `Calendar: ${applicable.name} v${applicable.version} (eff ${applicable.effectiveDate})`,
-      ],
-    });
-  };
-
-
-  // confirm booking (client-side “stage” only; hand-off to API as needed)
-  // confirm booking → persist + reflect on calendar, keep drawer open
-    const handleConfirm = async () => {
-      if (!testResult?.ok || !chosenUnit) return;
-
-      try {
-        // Recompute range
-        const startYmd = toYMD(testStart);
-        const endInclusive = cal.category === "reservations" ? toYMD(testEnd || testStart) : startYmd;
-        const endExclusive = addDaysYmd(endInclusive, 1); // FullCalendar expects EXCLUSIVE end
-
-        // Re-pick applicable calendar link for safety
-        const links = (chosenUnit.calendars ?? []).map((l: any) => ({
-          calendarId: String(l.calendarId),
-          name: String(l.name ?? ""),
-          version: Number(l.version ?? 1),
-          effectiveDate: toYMD(l.effectiveDate),
-        }));
-        const startMs = Date.parse(startYmd);
-        const applicable = links
-          .filter((l) => Date.parse(l.effectiveDate) <= startMs)
-          .sort((a, b) => Date.parse(a.effectiveDate) - Date.parse(b.effectiveDate))
-          .at(-1);
-        if (!applicable) {
-          setTestResult({ ok: false, reasons: [`No applicable calendar for ${startYmd}.`] });
-          return;
-        }       
-        const rate = Number(chosenUnit.rate || 0);
-        const nights = Math.max(1, Math.round((Date.parse(endExclusive) - Date.parse(startYmd)) / 86400000));
-        const totalDisplay = rate * nights; // just for the message
-
-        const saved = await createReservation({
-          unitId: String(chosenUnit._id),
-          unitName: chosenUnit.name,
-          unitNumber: chosenUnit.unitNumber || "",
-          calendarId: applicable.calendarId,
-          calendarName: applicable.name,         
-          startYmd,                       // inclusive
-          endYmd: endExclusive,           // exclusive
-          rate,
-          currency: chosenUnit.currency || "USD",
-        });
-
-        // Reflect on the grid immediately
-        const ev: EventInput = {
-          id: `resv-${saved._id}`,
-          start: startYmd,
-          end: endExclusive,
-          allDay: true,
-          display: "block",
-          title: `${chosenUnit.name}${chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}`,
-          classNames: ["fc-reservation-pill"],
-          extendedProps: {
-            unitId: String(chosenUnit._id),
-            calendarId: applicable.calendarId,
-            rate,
-            currency: chosenUnit.currency || "USD",
-          },
-        };
-        onReservationCreated?.(ev);
-
-        // Success message (don’t close drawer)
-        setTestResult({
-          ok: true,
-           reasons: [
-            `Reservation saved for ${chosenUnit.name}${chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}.`,
-            `Calendar: ${applicable.name}`,
-            `Dates: ${startYmd} → ${endInclusive} (${nights} night${nights > 1 ? "s" : ""})`,
-            `Rate: ${chosenUnit.currency} ${rate.toFixed(2)} • Est. total: ${chosenUnit.currency} ${totalDisplay.toFixed(2)}`,
-          ],
-        });
-      } catch (err: any) {
-        setTestResult({ ok: false, reasons: [err?.message || "Failed to save reservation."] });
-      }
-    };
-
-
-  const handleCancelQuote = () => {
-    setTestResult(null);
-    setChosenUnit(null);
-    setChosenCalendarInfo(null);
-    setQuotedTotal(null);
-  };
-
   return (
     <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3">
       <div className="flex items-center gap-2">
@@ -306,11 +80,7 @@ export default function HeaderBar({
           <Badge className="ml-1 bg-red-600 text-white">new calendar</Badge>
         )}
 
-        {isDirty && (
-          <Badge className="ml-1 border-amber-500 text-amber-700 bg-amber-50">
-            Unsaved
-          </Badge>
-        )}
+        {isDirty && <Badge className="ml-1 border-amber-500 text-amber-700 bg-amber-50">Unsaved</Badge>}
       </div>
 
       <div className="flex items-center gap-2">
@@ -392,31 +162,24 @@ export default function HeaderBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Existing calendars dropdown (unchanged) */}
+        {/* Existing calendars dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" className="gap-1 text-xs">
               <Database className="h-4 w-4" /> Calendars <ChevronDown className="h-3 w-3" />
             </Button>
           </DropdownMenuTrigger>
-
           <DropdownMenuContent className="w-[360px]" align="end">
             <DropdownMenuLabel className="text-xs">Select to Edit</DropdownMenuLabel>
             <DropdownMenuSeparator />
-
             {loadingCatalog && <DropdownMenuItem disabled>Loading…</DropdownMenuItem>}
-            {!loadingCatalog && catalog.length === 0 && (
-              <DropdownMenuItem disabled>No calendars</DropdownMenuItem>
-            )}
-
+            {!loadingCatalog && catalog.length === 0 && <DropdownMenuItem disabled>No calendars</DropdownMenuItem>}
             {!loadingCatalog && catalog.length > 0 && (
               <div className="max-h-72 overflow-y-auto pr-1">
                 {[...catalog]
                   .sort(
                     (a, b) =>
-                      Number(b.active) - Number(a.active) ||
-                      b.version - a.version ||
-                      a.name.localeCompare(b.name)
+                      Number(b.active) - Number(a.active) || b.version - a.version || a.name.localeCompare(b.name)
                   )
                   .map((c) => (
                     <DropdownMenuItem
@@ -431,12 +194,7 @@ export default function HeaderBar({
                       className="justify-between gap-2"
                     >
                       <div className="flex min-w-0 items-center gap-2">
-                        <span
-                          className={`h-2 w-2 rounded-full ${
-                            c.active ? "bg-emerald-500" : "bg-zinc-400"
-                          }`}
-                          aria-hidden
-                        />
+                        <span className={`h-2 w-2 rounded-full ${c.active ? "bg-emerald-500" : "bg-zinc-400"}`} />
                         <span className="truncate">{c.name}</span>
                       </div>
                       <span className="shrink-0 text-xs text-muted-foreground">
@@ -446,7 +204,6 @@ export default function HeaderBar({
                   ))}
               </div>
             )}
-
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onReset}>
               <RefreshCcw className="h-3 w-3 mr-2" />
@@ -494,11 +251,7 @@ export default function HeaderBar({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setCal((p) => ({ ...p, active: !p.active }))}
-            >
+            <Button variant="ghost" size="icon" onClick={() => setCal((p) => ({ ...p, active: !p.active }))}>
               {cal.active ? <Power className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
             </Button>
           </TooltipTrigger>
@@ -515,113 +268,6 @@ export default function HeaderBar({
             <SelectItem value="multiMonthYear">Year</SelectItem>
           </SelectContent>
         </Select>
-
-        {/* Test Sheet (upgraded) */}
-        <Sheet open={testOpen} onOpenChange={setTestOpen}>
-          <SheetTrigger asChild>
-            <Button variant="default" size="sm" className="ml-2 gap-1">
-              <TestTube2 className="h-4 w-4" /> Test
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="right" className="w-[380px]">
-            <SheetHeader><SheetTitle>Test Booking</SheetTitle></SheetHeader>
-            <div className="mt-4 space-y-3">
-              {/* pick unit by _id */}
-              <div>
-                <Label className="text-xs">Unit</Label>
-                <Select value={selectedUnitId} onValueChange={setSelectedUnitId}>
-                  <SelectTrigger className="h-8"><SelectValue placeholder="Choose unit" /></SelectTrigger>
-                  <SelectContent>
-                    {loadingUnits && <div className="px-2 py-1 text-xs text-muted-foreground">Loading…</div>}
-                    {!loadingUnits && units.length === 0 && <div className="px-2 py-1 text-xs text-muted-foreground">No units</div>}
-                    {!loadingUnits && units.map((u) => (
-                      <SelectItem key={String(u._id)} value={String(u._id)}>
-                        {u.name}{u.unitNumber ? ` #${u.unitNumber}` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-xs">Mode</Label>
-                <Select value={cal.category} onValueChange={(v: CalendarCategory) => setCal({ ...cal, category: v })}>
-                  <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="reservations">Reservations</SelectItem>
-                    <SelectItem value="appointments">Appointments</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label className="text-xs">Start (yyyy-mm-dd)</Label>
-                <Input value={testStart} onChange={(e) => setTestStart(e.target.value)} placeholder="2025-08-29" className="h-8" />
-              </div>
-
-              {cal.category === "reservations" && (
-                <div>
-                  <Label className="text-xs">End (yyyy-mm-dd)</Label>
-                  <Input value={testEnd} onChange={(e) => setTestEnd(e.target.value)} placeholder="2025-08-30" className="h-8" />
-                </div>
-              )}
-
-              <Button onClick={handleCheckAvailability} className="w-full">Check availability</Button>
-
-              {/* Outcome */}
-              {testResult && (
-                <Card>
-                  <CardContent className="pt-4 space-y-2">
-                    <div className={`font-medium ${testResult.ok ? "text-green-600" : "text-red-600"}`}>
-                      {testResult.ok ? "Available" : "Unavailable"}
-                    </div>
-
-                    {/* details on success */}
-                    {testResult.ok && chosenUnit && (
-                      <div className="text-sm space-y-1">
-                        <div>
-                          <span className="font-medium">Unit:</span>{" "}
-                          {chosenUnit.name}{chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}
-                        </div>
-                        <div><span className="font-medium">Dates:</span> {testStart}{cal.category === "reservations" ? ` → ${testEnd || testStart}` : ""}</div>
-                        {chosenCalendarInfo && (
-                          <div className="text-xs text-muted-foreground">
-                            Using calendar: {chosenCalendarInfo.name} (v{chosenCalendarInfo.version})
-                          </div>
-                        )}
-                        <div>
-                          <span className="font-medium">Rate:</span>{" "}
-                          {chosenUnit.currency} {chosenUnit.rate}
-                          {cal.category === "reservations" ? " /night" : ""}
-                        </div>
-                        {quotedTotal !== null && (
-                          <div>
-                            <span className="font-medium">Total:</span>{" "}
-                            {chosenUnit.currency} {quotedTotal}
-                          </div>
-                        )}
-                        <div className="text-xs text-muted-foreground">
-                          Cancellation: {cal.cancelHours}h notice, fee {cal.currency} {cal.cancelFee}
-                        </div>
-                        <div className="flex gap-2 pt-2">
-                          <Button size="sm" onClick={handleConfirm}>Confirm</Button>
-                          <Button size="sm" variant="outline" onClick={handleCancelQuote}>Cancel</Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* reasons on failure */}
-                    {!testResult.ok && (
-                      <ul className="mt-1 list-disc pl-5 text-sm">
-                        {testResult.reasons.map((r, i) => <li key={i}>{r}</li>)}
-                      </ul>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </SheetContent>
-        </Sheet>
 
         <Button
           variant={isDirty ? "default" : "outline"}
