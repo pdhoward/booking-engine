@@ -7,11 +7,9 @@ const reservationSchema = new Schema(
     unitNumber: { type: String },
     calendarId: { type: Schema.Types.ObjectId, ref: "Calendar", required: true, index: true },
 
-    // Dates are stored as yyyy-mm-dd at UTC midnight
-    start: { type: Date, required: true }, // inclusive
-    end: { type: Date, required: true },   // inclusive
-
-    nights: { type: Number, required: true },
+    // Dates stored as UTC; endDate is exclusive (FullCalendar-friendly)
+    startDate: { type: Date, required: true },
+    endDate: { type: Date, required: true },
 
     // Snapshot the commercial terms at time of booking
     rate: { type: Number, required: true },
@@ -25,8 +23,7 @@ const reservationSchema = new Schema(
   { timestamps: true }
 );
 
-// Test for overlap checks
 // overlap condition: req.start <= existing.end AND req.end >= existing.start
-reservationSchema.index({ unitId: 1, start: 1, end: 1, status: 1 });
+reservationSchema.index({ unitId: 1, startDate: 1, endDate: 1, status: 1 });
 
 export default mongoose.models.Reservation || mongoose.model("Reservation", reservationSchema);

@@ -7,6 +7,7 @@ import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
 import { fetchUnitById } from "@/lib/api/units";
 import { fetchCalendarById } from "@/lib/api/calendars";
 import { fetchAllUnits } from "@/lib/api/units";
+import { createReservation } from "@/lib/api/reservations";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,11 +44,6 @@ type Props = {
 // ---- helpers only used by the test sheet ----
 const toMidnightUTC = (isoYmd: string) => new Date(`${isoYmd}T00:00:00Z`);
 
-const ymdUTC = (d: Date) =>
-  new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-    .toISOString()
-    .slice(0, 10);
-
 const toYMD = (d: Date | string) => {
   const x = typeof d === "string" ? new Date(d) : d;
   return new Date(Date.UTC(x.getFullYear(), x.getMonth(), x.getDate()))
@@ -55,20 +51,8 @@ const toYMD = (d: Date | string) => {
     .slice(0, 10);
 };
 
-function pickCalendarLinkForStart(
-  links: { effectiveDate: string }[],
-  startYmd: string
-) {
-  const start = toMidnightUTC(startYmd);
-  const eligible = links.filter((l) => toMidnightUTC(l.effectiveDate) <= start);
-  if (!eligible.length) return null;
-  eligible.sort(
-    (a, b) =>
-      toMidnightUTC(a.effectiveDate).getTime() -
-      toMidnightUTC(b.effectiveDate).getTime()
-  );
-  return eligible[eligible.length - 1]; // latest <= start
-}
+const addDaysYmd = (ymd: string, days: number) =>
+  toYMD(new Date(Date.parse(ymd) + days * 86400000));
 
 function nightsBetween(startYmd: string, endYmd: string) {
   const s = toMidnightUTC(startYmd).getTime();
@@ -221,27 +205,81 @@ export default function HeaderBar({
 
 
   // confirm booking (client-side “stage” only; hand-off to API as needed)
-  const handleConfirm = async () => {
-    if (!testResult?.ok || !chosenUnit) return;
-    const startYmd = testStart;
-    const endYmd = cal.category === "reservations" ? (testEnd || testStart) : testStart;
+  // confirm booking → persist + reflect on calendar, keep drawer open
+    const handleConfirm = async () => {
+      if (!testResult?.ok || !chosenUnit) return;
 
-    // Optional: persist via /api/reservations; for now we just create a calendar pill
-    const ev: EventInput = {
-      id: `resv-${chosenUnit._id}-${startYmd}`,
-      start: startYmd,
-      end: ymdUTC(new Date(toMidnightUTC(endYmd).getTime() + 86400000)), // exclusive end for all-day span
-      allDay: true,
-      display: "block",
-      title: `${chosenUnit.name}${chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}`,
-      classNames: ["fc-reservation-pill"],
+      try {
+        // Recompute range
+        const startYmd = toYMD(testStart);
+        const endInclusive = cal.category === "reservations" ? toYMD(testEnd || testStart) : startYmd;
+        const endExclusive = addDaysYmd(endInclusive, 1); // FullCalendar expects EXCLUSIVE end
+
+        // Re-pick applicable calendar link for safety
+        const links = (chosenUnit.calendars ?? []).map((l: any) => ({
+          calendarId: String(l.calendarId),
+          name: String(l.name ?? ""),
+          version: Number(l.version ?? 1),
+          effectiveDate: toYMD(l.effectiveDate),
+        }));
+        const startMs = Date.parse(startYmd);
+        const applicable = links
+          .filter((l) => Date.parse(l.effectiveDate) <= startMs)
+          .sort((a, b) => Date.parse(a.effectiveDate) - Date.parse(b.effectiveDate))
+          .at(-1);
+        if (!applicable) {
+          setTestResult({ ok: false, reasons: [`No applicable calendar for ${startYmd}.`] });
+          return;
+        }       
+        const rate = Number(chosenUnit.rate || 0);
+        const nights = Math.max(1, Math.round((Date.parse(endExclusive) - Date.parse(startYmd)) / 86400000));
+        const totalDisplay = rate * nights; // just for the message
+
+        const saved = await createReservation({
+          unitId: String(chosenUnit._id),
+          unitName: chosenUnit.name,
+          unitNumber: chosenUnit.unitNumber || "",
+          calendarId: applicable.calendarId,
+          calendarName: applicable.name,         
+          startYmd,                       // inclusive
+          endYmd: endExclusive,           // exclusive
+          rate,
+          currency: chosenUnit.currency || "USD",
+        });
+
+        // Reflect on the grid immediately
+        const ev: EventInput = {
+          id: `resv-${saved._id}`,
+          start: startYmd,
+          end: endExclusive,
+          allDay: true,
+          display: "block",
+          title: `${chosenUnit.name}${chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}`,
+          classNames: ["fc-reservation-pill"],
+          extendedProps: {
+            unitId: String(chosenUnit._id),
+            calendarId: applicable.calendarId,
+            rate,
+            currency: chosenUnit.currency || "USD",
+          },
+        };
+        onReservationCreated?.(ev);
+
+        // Success message (don’t close drawer)
+        setTestResult({
+          ok: true,
+           reasons: [
+            `Reservation saved for ${chosenUnit.name}${chosenUnit.unitNumber ? ` #${chosenUnit.unitNumber}` : ""}.`,
+            `Calendar: ${applicable.name}`,
+            `Dates: ${startYmd} → ${endInclusive} (${nights} night${nights > 1 ? "s" : ""})`,
+            `Rate: ${chosenUnit.currency} ${rate.toFixed(2)} • Est. total: ${chosenUnit.currency} ${totalDisplay.toFixed(2)}`,
+          ],
+        });
+      } catch (err: any) {
+        setTestResult({ ok: false, reasons: [err?.message || "Failed to save reservation."] });
+      }
     };
-    onReservationCreated?.(ev);
 
-    // Close drawer & reset local result
-    setTestOpen(false);
-    setTestResult(null);
-  };
 
   const handleCancelQuote = () => {
     setTestResult(null);
