@@ -1,3 +1,4 @@
+// /app/test/page.tsx
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
@@ -14,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { fetchAllUnits, fetchUnitById } from "@/lib/api/units";
 import { fetchCalendarById } from "@/lib/api/calendars";
 import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
-import { createReservation } from "@/lib/api/reservations";
+import { createReservation, checkReservationOverlap } from "@/lib/api/reservations";
 
 // ---- date helpers (UTC-ymd safe) ----
 const toMidnightUTC = (isoYmd: string) => new Date(`${isoYmd}T00:00:00Z`);
@@ -29,6 +30,16 @@ function nightsBetween(startYmd: string, endYmd: string) {
   return Math.max(1, Math.round((e - s) / 86400000) || 1);
 }
 
+// ---- small presentational bits ----
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="font-medium">{label}:</span>
+      <div className="flex-1">{children}</div>
+    </div>
+  );
+}
+
 export default function TestBookingPage() {
   // data
   const [units, setUnits] = useState<Unit[]>([]);
@@ -40,7 +51,7 @@ export default function TestBookingPage() {
   const [startYmd, setStartYmd] = useState("");
   const [endYmd, setEndYmd] = useState("");
 
-  // result/confirmation
+  // result / confirmation
   const [result, setResult] = useState<{ ok: boolean; reasons: string[] } | null>(null);
   const [confirmation, setConfirmation] = useState<{
     id: string;
@@ -53,6 +64,10 @@ export default function TestBookingPage() {
   const [unit, setUnit] = useState<Unit | null>(null);
   const [calInfo, setCalInfo] = useState<{ name: string; version: number } | null>(null);
   const [quotedTotal, setQuotedTotal] = useState<number | null>(null);
+
+  // UX
+  const [checking, setChecking] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -71,7 +86,7 @@ export default function TestBookingPage() {
     return `${unit.name}${unit.unitNumber ? ` #${unit.unitNumber}` : ""}`;
   }, [unit]);
 
-  // pick calendar link for a start date (latest effectiveDate <= start)
+  // choose latest effective calendar <= start
   function pickCalendarLink(links: any[], start: string) {
     const sMs = Date.parse(start);
     const normalized = (links ?? []).map((l) => ({
@@ -86,90 +101,108 @@ export default function TestBookingPage() {
     return eligible.at(-1);
   }
 
-  // check availability
+  // availability w/ overlap check
   const checkAvailability = async () => {
-    // reset UI states
+    setChecking(true);
+    // reset UI slice
     setResult(null);
     setConfirmation(null);
     setUnit(null);
     setCalInfo(null);
     setQuotedTotal(null);
 
-    const brief = units.find((u) => String(u._id) === selectedUnitId);
-    if (!brief) {
-      setResult({ ok: false, reasons: ["Please choose a unit."] });
-      return;
-    }
-    if (!startYmd) {
-      setResult({ ok: false, reasons: ["Start date is required."] });
-      return;
-    }
-    const endInclusive = mode === "reservations" ? (endYmd || startYmd) : startYmd;
-
-    let full = await fetchUnitById(String(brief._id)).catch(() => null);
-    full = full ?? brief;
-
-    const link = pickCalendarLink(full.calendars ?? [], startYmd);
-    if (!link) {
-      const future = (full.calendars ?? [])
-        .map((l: any) => Date.parse(toYMD(l.effectiveDate)))
-        .filter((ms: number) => Number.isFinite(ms) && ms > Date.parse(startYmd))
-        .sort((a: number, b: number) => a - b)[0];
-      setResult({
-        ok: false,
-        reasons: [
-          `No applicable calendar for ${startYmd}. Available from: ${
-            future ? new Date(future).toISOString().slice(0, 10) : "—"
-          }.`,
-        ],
-      });
-      return;
-    }
-
-    const calendar = await fetchCalendarById(link.calendarId);
-    if (!calendar) {
-      setResult({ ok: false, reasons: ["Linked calendar not found."] });
-      return;
-    }
-
-    const evalRes = evaluateBookingRequest(calendar, { start: startYmd, end: endInclusive, mode });
-    setUnit(full);
-    setCalInfo({ name: calendar.name, version: calendar.version });
-
-    if (!evalRes.ok) {
-      setResult(evalRes);
-      return;
-    }
-
-    const nights = mode === "reservations" ? nightsBetween(startYmd, endInclusive) : 1;
-    const total = (full.rate || 0) * nights;
-    setQuotedTotal(total);
-
-    setResult({
-      ok: true,
-      reasons: [
-        `Rate: ${full.currency} ${total} (${nights} night${nights > 1 ? "s" : ""})`,
-        `Cancel: ${calendar.cancelHours}h notice, fee ${calendar.currency} ${calendar.cancelFee}`,
-        `Calendar: ${link.name} v${link.version} (eff ${link.effectiveDate})`,
-      ],
-    });
-  };
-
-  // confirm → persist reservation (end is EXCLUSIVE in API) and show CONFIRMATION card
-  const confirmReservation = async () => {
-    if (!result?.ok || !unit) return;
-
     try {
+      const brief = units.find((u) => String(u._id) === selectedUnitId);
+      if (!brief) {
+        setResult({ ok: false, reasons: ["Please choose a unit."] });
+        return;
+      }
+      if (!startYmd) {
+        setResult({ ok: false, reasons: ["Start date is required."] });
+        return;
+      }
+
       const endInclusive = mode === "reservations" ? (endYmd || startYmd) : startYmd;
       const endExclusive = addDaysYmd(endInclusive, 1);
 
+      // load full unit
+      let full = await fetchUnitById(String(brief._id)).catch(() => null);
+      full = full ?? brief;
+
+      // calendar selection
+      const link = pickCalendarLink(full.calendars ?? [], startYmd);
+      if (!link) {
+        const future = (full.calendars ?? [])
+          .map((l: any) => Date.parse(toYMD(l.effectiveDate)))
+          .filter((ms: number) => Number.isFinite(ms) && ms > Date.parse(startYmd))
+          .sort((a: number, b: number) => a - b)[0];
+        setResult({
+          ok: false,
+          reasons: [
+            `No applicable calendar for ${startYmd}. Available from: ${
+              future ? new Date(future).toISOString().slice(0, 10) : "—"
+            }.`,
+          ],
+        });
+        return;
+      }
+
+      // hard overlap guard (server)
+      const overlap = await checkReservationOverlap({
+        unitId: String(full._id),
+        startYmd,
+        endYmd: endExclusive,
+      });
+      if (overlap.overlap) {
+        setResult({ ok: false, reasons: ["Overlapping reservation exists."] });
+        return;
+      }
+
+      // policy/rules
+      const calendar = await fetchCalendarById(link.calendarId);
+      if (!calendar) {
+        setResult({ ok: false, reasons: ["Linked calendar not found."] });
+        return;
+      }
+
+      const evalRes = evaluateBookingRequest(calendar, { start: startYmd, end: endInclusive, mode });
+      setUnit(full);
+      setCalInfo({ name: calendar.name, version: calendar.version });
+
+      if (!evalRes.ok) {
+        setResult(evalRes);
+        return;
+      }
+
+      const nights = mode === "reservations" ? nightsBetween(startYmd, endInclusive) : 1;
+      const total = (full.rate || 0) * nights;
+      setQuotedTotal(total);
+
+      setResult({
+        ok: true,
+        reasons: [
+          `Rate: ${full.currency} ${total} (${nights} night${nights > 1 ? "s" : ""})`,
+          `Cancel: ${calendar.cancelHours}h notice, fee ${calendar.currency} ${calendar.cancelFee}`,
+          `Calendar: ${link.name} v${link.version} (eff ${link.effectiveDate})`,
+        ],
+      });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // confirm → persist and replace with confirmation card
+  const confirmReservation = async () => {
+    if (!result?.ok || !unit) return;
+    setConfirming(true);
+    try {
+      const endInclusive = mode === "reservations" ? (endYmd || startYmd) : startYmd;
+      const endExclusive = addDaysYmd(endInclusive, 1);
       const link = pickCalendarLink(unit.calendars ?? [], startYmd);
       if (!link) {
         setResult({ ok: false, reasons: ["No applicable calendar."] });
         return;
       }
-
-      const rate = Number(unit.rate || 0);
 
       const saved = await createReservation({
         unitId: String(unit._id),
@@ -177,22 +210,24 @@ export default function TestBookingPage() {
         unitNumber: unit.unitNumber || "",
         calendarId: link.calendarId,
         calendarName: link.name,
-        startYmd,
-        endYmd: endExclusive, // exclusive for API
-        rate,                 // per-night (or flat for appts)
+        startYmd,            // inclusive
+        endYmd: endExclusive, // EXCLUSIVE for API
+        rate: Number(unit.rate || 0),
         currency: unit.currency || "USD",
       });
 
-      // Only after successful POST, replace UI with confirmation
+      // success → show confirmation card
       setResult(null);
       setConfirmation({
         id: saved._id,
         unitLabel: `${unit.name}${unit.unitNumber ? ` #${unit.unitNumber}` : ""}`,
         startYmd,
-        endYmd: endInclusive, // inclusive for human-friendly display
+        endYmd: endInclusive,
       });
     } catch (err: any) {
       setResult({ ok: false, reasons: [err?.message || "Failed to save reservation."] });
+    } finally {
+      setConfirming(false);
     }
   };
 
@@ -228,13 +263,11 @@ export default function TestBookingPage() {
                   {!loadingUnits && units.length === 0 && (
                     <div className="px-2 py-1 text-xs text-muted-foreground">No units</div>
                   )}
-                  {!loadingUnits &&
-                    units.map((u) => (
-                      <SelectItem key={String(u._id)} value={String(u._id)}>
-                        {u.name}
-                        {u.unitNumber ? ` #${u.unitNumber}` : ""}
-                      </SelectItem>
-                    ))}
+                  {!loadingUnits && units.map((u) => (
+                    <SelectItem key={String(u._id)} value={String(u._id)}>
+                      {u.name}{u.unitNumber ? ` #${u.unitNumber}` : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -264,22 +297,18 @@ export default function TestBookingPage() {
               </div>
             )}
 
-            <Button className="w-full" onClick={checkAvailability}>
-              Check availability
+            <Button className="w-full" onClick={checkAvailability} disabled={checking}>
+              {checking ? "Checking…" : "Check availability"}
             </Button>
 
-            {/* Confirmation card (shown only after successful POST) */}
+            {/* Confirmation card (only after successful POST) */}
             {confirmation && (
               <Card>
                 <CardContent className="pt-4 space-y-2">
                   <div className="font-medium text-green-700">Reservation confirmed</div>
                   <div className="text-sm space-y-1">
-                    <div>
-                      <span className="font-medium">Unit:</span> {confirmation.unitLabel}
-                    </div>
-                    <div>
-                      <span className="font-medium">Dates:</span> {confirmation.startYmd} → {confirmation.endYmd}
-                    </div>
+                    <Row label="Unit">{confirmation.unitLabel}</Row>
+                    <Row label="Dates">{confirmation.startYmd} → {confirmation.endYmd}</Row>
                     <div className="text-xs text-muted-foreground">
                       Your booking has been saved successfully.
                     </div>
@@ -303,31 +332,24 @@ export default function TestBookingPage() {
 
                   {result.ok && unit && (
                     <div className="text-sm space-y-1">
-                      <div>
-                        <span className="font-medium">Unit:</span> {chosenUnitLabel}
-                      </div>
-                      <div>
-                        <span className="font-medium">Dates:</span>{" "}
-                        {startYmd}
-                        {mode === "reservations" ? ` → ${endYmd || startYmd}` : ""}
-                      </div>
+                      <Row label="Unit">{chosenUnitLabel}</Row>
+                      <Row label="Dates">
+                        {startYmd}{mode === "reservations" ? ` → ${endYmd || startYmd}` : ""}
+                      </Row>
                       {calInfo && (
                         <div className="text-xs text-muted-foreground">
                           Using calendar: {calInfo.name} (v{calInfo.version})
                         </div>
                       )}
-                      <div>
-                        <span className="font-medium">Rate:</span> {unit.currency} {unit.rate}
-                        {mode === "reservations" ? " /night" : ""}
-                      </div>
+                      <Row label="Rate">
+                        {unit.currency} {unit.rate}{mode === "reservations" ? " /night" : ""}
+                      </Row>
                       {quotedTotal !== null && (
-                        <div>
-                          <span className="font-medium">Total:</span> {unit.currency} {quotedTotal}
-                        </div>
+                        <Row label="Total">{unit.currency} {quotedTotal}</Row>
                       )}
                       <div className="flex gap-2 pt-2">
-                        <Button size="sm" onClick={confirmReservation}>
-                          Confirm
+                        <Button size="sm" onClick={confirmReservation} disabled={confirming}>
+                          {confirming ? "Saving…" : "Confirm"}
                         </Button>
                         <Button size="sm" variant="outline" onClick={resetQuote}>
                           Cancel
@@ -338,9 +360,7 @@ export default function TestBookingPage() {
 
                   {!result.ok && (
                     <ul className="mt-1 list-disc pl-5 text-sm">
-                      {result.reasons.map((r, i) => (
-                        <li key={i}>{r}</li>
-                      ))}
+                      {result.reasons.map((r, i) => <li key={i}>{r}</li>)}
                     </ul>
                   )}
                 </CardContent>
