@@ -17,6 +17,8 @@ import { fetchCalendarById } from "@/lib/api/calendars";
 import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
 import { createReservation, checkReservationOverlap } from "@/lib/api/reservations";
 
+import { DatePicker } from "@/components/DatePicker";
+
 // ---- date helpers (UTC-ymd safe) ----
 const toMidnightUTC = (isoYmd: string) => new Date(`${isoYmd}T00:00:00Z`);
 const toYMD = (d: Date | string) => {
@@ -48,8 +50,8 @@ export default function TestBookingPage() {
   // inputs
   const [selectedUnitId, setSelectedUnitId] = useState<string>("");
   const [mode, setMode] = useState<CalendarCategory>("reservations");
-  const [startYmd, setStartYmd] = useState("");
-  const [endYmd, setEndYmd] = useState("");
+  //const [startYmd, setStartYmd] = useState("");
+  //const [endYmd, setEndYmd] = useState("");
 
   // result / confirmation
   const [result, setResult] = useState<{ ok: boolean; reasons: string[] } | null>(null);
@@ -68,6 +70,12 @@ export default function TestBookingPage() {
   // UX
   const [checking, setChecking] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
+
+  // derive ymd strings where you previously used startYmd/endYmd:
+  const startYmd = useMemo(() => (startDate ? toYMD(startDate) : ""), [startDate]);
+  const endYmd = useMemo(() => (endDate ? toYMD(endDate) : ""), [endDate]);
 
   useEffect(() => {
     (async () => {
@@ -285,15 +293,37 @@ export default function TestBookingPage() {
             </div>
 
             {/* Dates */}
+            {/* Start date */}
             <div>
-              <Label className="text-xs">Start (yyyy-mm-dd)</Label>
-              <Input type="date" value={startYmd} onChange={(e) => setStartYmd(e.target.value)} className="h-9" />
+              <Label className="text-xs">Start</Label>
+              <DatePicker
+                value={startDate}
+                onChange={(d) => {
+                  setStartDate(d);
+                  // if checkout is before start (or unset), nudge it to start
+                  if (d && endDate && endDate < d) setEndDate(d);
+                }}
+                numberOfMonths={2}
+                placeholder="Select check-in"
+              />
             </div>
 
+           {/* End date (reservations only) */}
             {mode === "reservations" && (
               <div>
-                <Label className="text-xs">End (yyyy-mm-dd)</Label>
-                <Input type="date" value={endYmd} onChange={(e) => setEndYmd(e.target.value)} className="h-9" />
+                <Label className="text-xs">End</Label>
+                <DatePicker
+                  value={endDate}
+                  onChange={setEndDate}
+                  numberOfMonths={2}
+                  // open the calendar at the same month as the check-in (e.g., December)
+                  defaultMonth={startDate}
+                  // disable any dates before the check-in
+                  disabled={startDate ? { before: startDate } : undefined}
+                  // visually mark the check-in date inside the checkout calendar
+                  modifiers={startDate ? { checkin: startDate } : undefined}
+                  placeholder="Select check-out"
+                />
               </div>
             )}
 
