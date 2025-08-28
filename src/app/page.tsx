@@ -1,87 +1,135 @@
-"use client"
-import Image from "next/image";
-import { useRouter } from 'next/navigation';
+// app/page.tsx
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Calendar, Building2, TestTube2, BookOpenCheck } from "lucide-react";
 
 export default function Home() {
-  const router = useRouter();
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://res.cloudinary.com/stratmachine/image/upload/v1592332360/machine/icon-384x384_liietq.png"
-          alt="Machine logo"
-          width={80}
-          height={80}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            AI Booking Engine. {" "}
-          </li>
-          <li className="tracking-[-.01em]">
-            Get Started by creating your Calendar Rules
-          </li>
-        </ol>
+    <main className="relative min-h-screen overflow-hidden bg-gradient-to-b from-background to-muted">
+      {/* hero */}
+      <section className="mx-auto max-w-6xl px-6 pt-16 pb-12">
+        <div className="grid gap-8 lg:grid-cols-2 items-center">
+          <div>
+            <h1 className="text-3xl md:text-5xl font-semibold tracking-tight">
+              Strategic Machines Booking Engine
+            </h1>
+            <p className="mt-4 text-muted-foreground text-base md:text-lg">
+              Design calendars, define inventory, and test reservations with effective-date logic—
+              all in one elegant workflow.
+            </p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Button asChild size="lg">
+                <Link href="/calendar"><Calendar className="mr-2 h-5 w-5" /> Calendars</Link>
+              </Button>
+              <Button asChild variant="outline" size="lg">
+                <Link href="/inventory"><Building2 className="mr-2 h-5 w-5" /> Units</Link>
+              </Button>
+              <Button asChild variant="secondary" size="lg">
+                <Link href="/test"><TestTube2 className="mr-2 h-5 w-5" /> Test Reservations</Link>
+              </Button>
+              <Button asChild variant="ghost" size="lg">
+                <Link href="/docs"><BookOpenCheck className="mr-2 h-5 w-5" /> Docs</Link>
+              </Button>
+            </div>
+          </div>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-             href="/dashboard" 
-              onClick={(e) => {
-                e.preventDefault(); // Prevent default <a> behavior
-                router.push('/dashboard'); 
-              }}
-          >           
-            Calendar
-          </a>
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-             href="/inventory" 
-              onClick={(e) => {
-                e.preventDefault(); // Prevent default <a> behavior
-                router.push('/inventory'); 
-              }}
-          >           
-            Inventory
-          </a>
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-             href="/test" 
-              onClick={(e) => {
-                e.preventDefault(); // Prevent default <a> behavior
-                router.push('/test'); 
-              }}
-          >           
-            Reservation 
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://www.strategicmachines.ai/"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          <div className="rounded-2xl border bg-background shadow-sm p-6">
+            <div className="grid md:grid-cols-2 gap-4">
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="font-medium">Effective-Date Calendars</div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Attach multiple calendars to a unit and automatically pick the one in effect at check-in.
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="font-medium">Inventory Modeling</div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Rich unit configs (beds, baths, ADA, amenities) with rate & currency snapshots at booking.
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="font-medium">Policy-Aware Tests</div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Lead time, blackout & holiday rules, min stay by weekday, and overlap detection.
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="pt-4">
+                  <div className="font-medium">Real-Time Visuals</div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Confirmations drop pills directly onto the calendar for instant feedback.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center"> 
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://www.strategicmachines.ai/"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://res.cloudinary.com/stratmachine/image/upload/v1592332360/machine/icon-384x384_liietq.png"
-            alt="Machine icon"
-            width={16}
-            height={16}
-          />
-          Go to Strategic Machines →
-        </a>
-      </footer>
-    </div>
+      </section>
+
+      {/* quick links */}
+      <section className="mx-auto max-w-6xl px-6 pb-16">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Link href="/calendar">
+            <Card className="hover:shadow-md transition-shadow">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5" />
+                  <div className="font-medium">Calendars</div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Create and version rules, blackouts, and holiday policies.
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/inventory">
+            <Card className="hover:shadow-md transition-shadow">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-5 w-5" />
+                  <div className="font-medium">Units</div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Define rooms, villas, configurations, and link calendars.
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/test">
+            <Card className="hover:shadow-md transition-shadow">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <TestTube2 className="h-5 w-5" />
+                  <div className="font-medium">Test Reservations</div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Check availability and confirm reservations safely.
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/docs">
+            <Card className="hover:shadow-md transition-shadow">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-2">
+                  <BookOpenCheck className="h-5 w-5" />
+                  <div className="font-medium">Docs</div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Read the project instructions sourced from GitHub.
+                </p>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+      </section>
+    </main>
   );
 }
