@@ -1,80 +1,47 @@
 // app/docs/page.tsx
+import React from "react";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
-import rehypeAutolink from "rehype-autolink-headings";
-import rehypePrettyCode from "rehype-pretty-code";
-import { fetchGitHubFileAsText } from "@/lib/github";
-
-export const dynamic = "force-dynamic";
-
-const prettyCodeOptions = {
-  theme: {
-    dark: "github-dark",
-    light: "github-light",
-  },
-  keepBackground: false,
-};
-
-const components = {
-  // You can map MDX elements to shadcn/ui, etc. if desired.
-};
-
-async function getInstructions() {
-  // primary path
-  const primary = await fetchGitHubFileAsText({
-    owner: "pdhoward",
-    repo: "booking-engine",
-    path: "Instructions.md",
-    ref: "main",
-  });
-  if (primary) return primary;
-
-  // common fallbacks
-  const fallbacks = ["docs/Instructions.md", "INSTRUCTIONS.md", "instructions.md"];
-  for (const path of fallbacks) {
-    const t = await fetchGitHubFileAsText({ owner: "pdhoward", repo: "booking-engine", path });
-    if (t) return t;
-  }
-  return null;
-}
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
+import rehypeExternalLinks from "rehype-external-links";
+import { fetchPrivateGithubFileRaw } from "@/lib/github";
+import { mdxComponents } from "@/components/docs/mdx-components";
 
 export default async function DocsPage() {
-  const mdx = await getInstructions();
-
-  if (!mdx) {
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <div className="rounded-lg border bg-background p-6">
-          <h1 className="text-xl font-semibold mb-1">Documentation</h1>
-          <p className="text-sm text-muted-foreground">
-            Couldn’t fetch <code>Instructions.md</code> from <code>pdhoward/booking-engine</code>.
-            Make sure the file exists and <code>GITHUB_TOKEN</code> is set in your server environment.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const source = await fetchPrivateGithubFileRaw({
+    owner: "pdhoward",
+    repo: "booking-engine",
+    path: "Instructions.mdx", 
+  });
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
-      <article className="prose prose-zinc dark:prose-invert max-w-none">
-       
-        <MDXRemote
-          source={mdx}
-          components={components}
-          options={{
-            mdxOptions: {
-              remarkPlugins: [remarkGfm],
-              rehypePlugins: [
-                rehypeSlug,
-                [rehypeAutolink, { behavior: "wrap" }],
-                [rehypePrettyCode, prettyCodeOptions],
-              ],
-            },
-          }}
-        />
-      </article>
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted">
+      <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-4">
+          <h1 className="text-sm font-semibold tracking-tight">Documentation</h1>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-3xl px-4 py-8">
+        {/* prose for typography defaults, but MDX components override key blocks */}
+        <article className="prose prose-zinc max-w-none dark:prose-invert">
+          <MDXRemote
+            source={source}
+            components={mdxComponents}
+            options={{
+              mdxOptions: {
+                remarkPlugins: [remarkGfm],
+                rehypePlugins: [
+                  rehypeSlug,
+                  [rehypeAutolinkHeadings, { behavior: "wrap" }],
+                  [rehypeExternalLinks, { target: "_blank", rel: ["noopener", "noreferrer"] }],
+                ],
+              },
+            }}
+          />
+        </article>
+      </main>
     </div>
   );
 }

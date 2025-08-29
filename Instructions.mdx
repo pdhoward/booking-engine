@@ -1,0 +1,61 @@
+# Booking Engine — Instructions
+
+<Callout title="Welcome">
+  This guide covers creating calendars, defining units, and testing reservations.
+</Callout>
+
+<StepCard title="Create & Manage Calendars" description="Define rules, blackouts, holidays, seasons, and pricing.">
+  1. **Open**: `/calendar`  
+  2. **Meta**: Name, Category, Owner, Currency  
+  3. **Lead Time**: min/max days in advance  
+  4. **Blackouts**: select dates in *Blackout* mode  
+  5. **Holidays**: select in *Holiday* mode and set min nights  
+  6. **Min Stay**: configure by weekday in the right rail  
+  7. **Seasons** *(optional)*: date ranges with price  
+  8. **Save**: The button glows when there are unsaved changes  
+</StepCard>
+
+<StepCard title="Define Units (Inventory)" description="Create rooms, villas, cabins, and link calendars with effective dates.">
+  - **Open**: `/inventory`  
+  - **Basics**: Name, Unit #, Type, Description  
+  - **Pricing**: Rate & Currency  
+  - **Configuration**: square feet, view, beds, amenities  
+  - **Link Calendars**: choose a calendar and set an **Effective Date**  
+  - You can link multiple calendars; the engine auto-selects the latest effective date **≤** check-in  
+  - **Save** the unit  
+</StepCard>
+
+<StepCard title="Test Reservations" description="Simulate availability and confirm bookings that persist to MongoDB.">
+  - **Open**: `/test`  
+  - **Select Unit**  
+  - **Pick Dates** (check-in/check-out for reservations)  
+  - **Check Availability**: lead time, blackouts/holidays, min stay, overlaps  
+  - **Confirm**: creates reservation (end stored exclusive) and shows success
+</StepCard>
+
+---
+
+### Data Model (abridged)
+
+<Callout title="Calendar Model">
+  - `(name, version)` unique  
+  - `blackouts: Date[]`  
+  - `holidays: { date; minNights }[]`  
+  - `leadTime: { minDays, maxDays }`  
+  - `minStayByWeekday: Record<string, number>`  
+  - `seasons: { start; end; price }[]`  
+  - `cancelHours, cancelFee`
+</Callout>
+
+<Callout title="Unit Model">
+  - `name, unitNumber, type, description, rate, currency`  
+  - `config: { squareFeet, view, beds[], shower, bathtub, hotTub, sauna, ada }`  
+  - `calendars: { calendarId, name, version, effectiveDate }[]`
+</Callout>
+
+<Callout title="Reservation Model">
+  - `unitId, unitName, unitNumber, calendarId`  
+  - `startDate (inclusive), endDate (exclusive)`  
+  - `rate, currency, cancelHours, cancelFee`  
+  - `status: "hold" | "confirmed" | "cancelled"`
+</Callout>

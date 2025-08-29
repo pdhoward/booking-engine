@@ -118,8 +118,7 @@ export default function BookingEnginePage() {
           onSave={handleSave}
           onReset={resetToNew}
           isDirty={isDirty}                     
-          setSavedSnapshot={setSavedSnapshot}  
-          onReservationCreated={(ev) => setReservationEvents((p) => [...p, ev])} 
+          setSavedSnapshot={setSavedSnapshot}           
         />
       </header>
 
