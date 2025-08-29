@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link"
 import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
 import { fetchCalendarById } from "@/lib/api/calendars";
 
@@ -65,8 +66,15 @@ export default function HeaderBar({
   return (
     <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3">
       <div className="flex items-center gap-2">
-        <CalendarIcon className="h-5 w-5" />
-        <span className="font-semibold tracking-tight">Booking Engine</span>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 rounded px-1 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+          aria-label="Go to Home"
+          title="Home"
+        >
+          <CalendarIcon className="h-5 w-5" aria-hidden="true" />
+          <span className="font-semibold tracking-tight">Booking Engine</span>
+        </Link>
 
         <Badge className={`ml-2 ${cal.active ? "bg-green-600" : "bg-red-600"} text-white`}>
           {cal.active ? "Active" : "Suspended"}

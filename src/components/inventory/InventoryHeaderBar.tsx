@@ -1,14 +1,12 @@
 // /components/inventory/InventoryHeaderBar.tsx
-// What: Top header bar for Inventory page. Shows active/new badges,
-//       unsaved indicator, and provides New / Save actions.
-
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { Unit } from "@/types/unit";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Save } from "lucide-react";
+import { Plus, Save, Calendar as CalendarIcon, } from "lucide-react";
 
 type Props = {
   u: Unit;
@@ -21,6 +19,15 @@ export default function InventoryHeaderBar({ u, isDirty, onNew, onSave }: Props)
   return (
     <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3">
       <div className="flex items-center gap-2">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 rounded px-1 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+          aria-label="Go to Home"
+          title="Home"
+        >
+          <CalendarIcon className="h-5 w-5" aria-hidden="true" />
+          <span className="font-semibold tracking-tight">Booking Engine</span>
+        </Link>
         <span className="font-semibold tracking-tight">Inventory</span>
 
         <Badge variant={u.active ? "default" : "secondary"} className="ml-2">

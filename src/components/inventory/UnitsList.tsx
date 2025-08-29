@@ -26,7 +26,7 @@ export default function UnitsList({
   return (
     <>
       <div className="flex items-center justify-between mb-2">
-        <div className="font-semibold">Units</div>
+        <div className="font-semibold">Existing Units</div>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

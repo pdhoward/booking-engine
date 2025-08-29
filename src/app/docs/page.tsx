@@ -11,6 +11,7 @@ import {
   Card, CardHeader, CardTitle, CardDescription, CardContent,
   Badge, Separator,
 } from "@/components/docs/mdx-parts";
+import DocsHeaderBar from "@/components/docs/DocsHeaderBar";
 
 // Build the mapping HERE so it’s a plain, enumerable object in RSC.
 const components = {
@@ -57,6 +58,11 @@ export default async function DocsPage() {
   // console.log("MDX components:", Object.keys(components));
 
   return (
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted text-foreground">
+    <DocsHeaderBar
+      githubUrl="https://github.com/pdhoward/booking-engine/blob/main/Instructions.mdx"
+      subtitle="Instructions"
+    />
     <main className="mx-auto max-w-3xl px-4 py-10">
       <article className="prose prose-zinc dark:prose-invert">
         <MDXRemote
@@ -75,5 +81,6 @@ export default async function DocsPage() {
         />
       </article>
     </main>
+    </div>
   );
 }

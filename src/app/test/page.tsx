@@ -2,6 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import Link from "next/link"
 import type { Unit } from "@/types/unit";
 import { CalendarCategory } from "@/types/calendar";
 
@@ -11,6 +12,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import {
+  Calendar as CalendarIcon,
+} from "lucide-react";
 
 import { fetchAllUnits, fetchUnitById } from "@/lib/api/units";
 import { fetchCalendarById } from "@/lib/api/calendars";
@@ -252,6 +256,15 @@ export default function TestBookingPage() {
       <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="mx-auto flex h-14 max-w-screen-2xl items-center justify-between px-3">
           <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 rounded px-1 py-1 hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring"
+              aria-label="Go to Home"
+              title="Home"
+            >
+              <CalendarIcon className="h-5 w-5" aria-hidden="true" />
+              <span className="font-semibold tracking-tight">Booking Engine</span>
+            </Link>
             <span className="font-semibold tracking-tight">Test Booking</span>
             {unit && !confirmation && <Badge className="ml-2">{chosenUnitLabel}</Badge>}
           </div>
