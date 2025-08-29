@@ -20,7 +20,7 @@ export default function Home() {
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Button asChild size="lg">
-                <Link href="/calendar"><Calendar className="mr-2 h-5 w-5" /> Calendars</Link>
+                <Link href="/dashboard"><Calendar className="mr-2 h-5 w-5" /> Calendars</Link>
               </Button>
               <Button asChild variant="outline" size="lg">
                 <Link href="/inventory"><Building2 className="mr-2 h-5 w-5" /> Units</Link>
@@ -76,7 +76,7 @@ export default function Home() {
       {/* quick links */}
       <section className="mx-auto max-w-6xl px-6 pb-16">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Link href="/calendar">
+          <Link href="/dashboard">
             <Card className="hover:shadow-md transition-shadow">
               <CardContent className="pt-6">
                 <div className="flex items-center gap-2">

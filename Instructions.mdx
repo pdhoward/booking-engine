@@ -1,6 +1,6 @@
 # Booking Engine — Instructions
 
-<Callout title="Welcome">
+<Callout title="Introduction">
   This guide covers creating calendars, defining units, and testing reservations.
 </Callout>
 
@@ -17,7 +17,7 @@
 
 <StepCard title="Define Units (Inventory)" description="Create rooms, villas, cabins, and link calendars with effective dates.">
   - **Open**: `/inventory`  
-  - **Basics**: Name, Unit #, Type, Description  
+  - **Basics**: Name, Unit #, Type, Description. Note that the combination of Name and Unit # creates a unique ID for the Unit. 
   - **Pricing**: Rate & Currency  
   - **Configuration**: square feet, view, beds, amenities  
   - **Link Calendars**: choose a calendar and set an **Effective Date**  
@@ -25,7 +25,7 @@
   - **Save** the unit  
 </StepCard>
 
-<StepCard title="Test Reservations" description="Simulate availability and confirm bookings that persist to MongoDB.">
+<StepCard title="Test Reservations" description="Simulate availability and confirm bookings that persist to the database.">
   - **Open**: `/test`  
   - **Select Unit**  
   - **Pick Dates** (check-in/check-out for reservations)  
@@ -48,12 +48,13 @@
 </Callout>
 
 <Callout title="Unit Model">
-  - `name, unitNumber, type, description, rate, currency`  
+  - `(name, unitNumber)` unique, 
+  - `type, description, rate, currency`  
   - `config: { squareFeet, view, beds[], shower, bathtub, hotTub, sauna, ada }`  
   - `calendars: { calendarId, name, version, effectiveDate }[]`
 </Callout>
 
-<Callout title="Reservation Model">
+<Callout title="Reservation Model - managed by AI">
   - `unitId, unitName, unitNumber, calendarId`  
   - `startDate (inclusive), endDate (exclusive)`  
   - `rate, currency, cancelHours, cancelFee`  
