@@ -74,6 +74,9 @@ export default function HeaderBar({
         >
           <CalendarIcon className="h-5 w-5" aria-hidden="true" />
           <span className="font-semibold tracking-tight">Booking Engine</span>
+          {/* Divider dot + subtitle */}
+          <span className="text-muted-foreground">•</span>
+          <span className="text-sm text-muted-foreground">Calendar</span>
         </Link>
 
         <Badge className={`ml-2 ${cal.active ? "bg-green-600" : "bg-red-600"} text-white`}>

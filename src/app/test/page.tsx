@@ -264,8 +264,10 @@ export default function TestBookingPage() {
             >
               <CalendarIcon className="h-5 w-5" aria-hidden="true" />
               <span className="font-semibold tracking-tight">Booking Engine</span>
-            </Link>
-            <span className="font-semibold tracking-tight">Test Booking</span>
+              {/* Divider dot + subtitle */}
+              <span className="text-muted-foreground">•</span>
+              <span className="text-sm text-muted-foreground">Test Reservation Workflow </span>
+            </Link>            
             {unit && !confirmation && <Badge className="ml-2">{chosenUnitLabel}</Badge>}
           </div>
         </div>
