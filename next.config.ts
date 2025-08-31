@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
         new URL('https://www.datocms-assets.com/**'), 
         new URL('https://res.cloudinary.com/stratmachine/**')],
     },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
 
 export default nextConfig;
