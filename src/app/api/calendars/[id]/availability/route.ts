@@ -5,9 +5,9 @@ import Calendar from "@/models/Calendar";
 import { buildAvailabilityGrid } from "@/lib/utils";
 import { format } from "date-fns";
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await dbConnect();
-  const { id } = params;
+  const { id } =  await params;
 
   const calendar = await Calendar.findById(id);
   if (!calendar) return NextResponse.json({ error: "Not found" }, { status: 404 });
