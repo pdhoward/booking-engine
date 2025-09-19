@@ -28,7 +28,8 @@ function normalizeUnit(u: any): LeanUnit | null {
   return u as LeanUnit;
 }
 
-export async function POST(req: NextRequest, { params }: { params: { tenantId: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ tenantId: string }> }) {
+  const { tenantId } = await params;
   const body = await req.json();
   const parsed = ReserveBodySchema.safeParse(body);
   if (!parsed.success) {

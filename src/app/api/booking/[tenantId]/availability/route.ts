@@ -33,7 +33,8 @@ function normalizeUnit(u: any): LeanUnit | null {
   return u as LeanUnit;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { tenantId: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ tenantId: string }> }) {
+  const { tenantId } = await params;
   const { searchParams } = new URL(req.url);
 
   // Validate inputs
