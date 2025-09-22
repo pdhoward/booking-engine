@@ -4,7 +4,7 @@ import dbConnect from "@/lib/db";
 import Calendar from "@/models/Calendar";
 import { evaluateBooking } from "@/lib/rulesEngine";
 
-// For production, you'd persist a Booking document here.
+// For production, persist a Booking document here.
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   await dbConnect();
