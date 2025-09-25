@@ -26,7 +26,7 @@ type LeanUnit = {
 };
 
 /** Turn a ZodError into a stable JSON shape without using deprecated APIs. */
-export function toValidationDetails(err: ZodError) {
+function toValidationDetails(err: ZodError) {
   // New Zod (preferred)
   const treeify = (z as any).treeifyError as
     | ((e: ZodError) => unknown)
@@ -96,9 +96,7 @@ export async function GET(
     await dbConnect();
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 1) Resolve Unit by tenant + unitId (string key).
-    //    If your model uses a different property name, change `unitId` below to match.
-    //    We DO NOT use findById or slug—string key only.
+    // 1) Resolve Unit by tenant + unit_id (string key).   
     // ─────────────────────────────────────────────────────────────────────────
     const rawUnit =
       (await UnitModel.findOne({ tenantId, unit_id: unit_id }).lean())   
