@@ -50,6 +50,7 @@ export interface UnitCalendarLink {
 
 export interface Unit {
   _id?: string;
+  unit_id: string;
   name: string;
   unitNumber?: string;
   type: UnitType;

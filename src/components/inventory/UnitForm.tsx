@@ -90,6 +90,10 @@ export default function UnitForm({
       {/* Basics */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
+          <Label className="text-xs">Unit ID</Label>
+          <Input value={u.unit_id} onChange={(e) => setU({ ...u, unit_id: e.target.value })} className="h-9" />
+        </div>
+        <div>
           <Label className="text-xs">Name</Label>
           <Input value={u.name} onChange={(e) => setU({ ...u, name: e.target.value })} className="h-9" />
         </div>

@@ -42,6 +42,7 @@ const CalendarLinkSchema = new Schema(
 
 const UnitSchema = new Schema(
   {
+    unit_id: { type: String, required: true },
     name: { type: String, required: true },
     unitNumber: { type: String },
     type: {
