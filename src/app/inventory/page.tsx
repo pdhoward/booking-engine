@@ -16,6 +16,7 @@ import UnitForm from "@/components/inventory/UnitForm";
 function emptyUnit(): Unit {
   return {
     unit_id: "",
+    tenantId: "",
     name: "",
     unitNumber: "",
     type: "guest_room",

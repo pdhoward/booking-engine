@@ -1,12 +1,10 @@
-// /app/api/booking/[tenantId]/availability/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 import dbConnect from "@/lib/db";
 import { UnitModel } from "@/models/Unit";
 import Reservation from "@/models/Reservation";
 import CalendarModel from "@/models/Calendar";
 
-// ✅ booking-layer schemas & helpers (server-safe)
-import { AvailabilityQuerySchema } from "@/models/schemas";
 import { addDaysYmd, toMidnightUTC } from "@/lib/engine/date";
 import { pickCalendarLink } from "@/lib/engine/pickCalendar";
 import { evaluateBookingServer } from "@/lib/engine/evaluateBookingOnServer";
@@ -14,6 +12,7 @@ import { evaluateBookingServer } from "@/lib/engine/evaluateBookingOnServer";
 // Temp - use locally to quiet TS without changing your models
 type LeanUnit = {
   _id: any;
+  unit_id?: string;
   name?: string;
   unitNumber?: string;
   rate?: number;
@@ -26,6 +25,27 @@ type LeanUnit = {
   }>;
 };
 
+/** Turn a ZodError into a stable JSON shape without using deprecated APIs. */
+export function toValidationDetails(err: ZodError) {
+  // New Zod (preferred)
+  const treeify = (z as any).treeifyError as
+    | ((e: ZodError) => unknown)
+    | undefined;
+
+  if (typeof treeify === "function") {
+    return treeify(err); // rich, nested structure
+  }
+
+  // Fallback for older Zod: build a simple, flat summary from issues
+  return {
+    issues: err.issues.map((i) => ({
+      path: i.path.join("."),
+      code: i.code,
+      message: i.message,
+    })),
+  };
+}
+
 /** Normalize a result that might (incorrectly) be inferred as array/null/obj */
 function normalizeUnit(u: any): LeanUnit | null {
   if (!u) return null;
@@ -33,35 +53,58 @@ function normalizeUnit(u: any): LeanUnit | null {
   return u as LeanUnit;
 }
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ tenantId: string }> }) {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Input validation: ONLY unit_id (string key), check_in/out, optional mode
+// ─────────────────────────────────────────────────────────────────────────────
+const AvailabilityParams = z.object({
+  unit_id:   z.string().min(1),
+  check_in:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  check_out: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  mode:      z.enum(["appointments", "reservations"]).optional(),
+});
+
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ tenantId: string }> }
+) {
   const { tenantId } = await params;
   const { searchParams } = new URL(req.url);
 
-  // Validate inputs
-  const parse = AvailabilityQuerySchema.safeParse({
-    unit_id: searchParams.get("unit_id") || undefined,
-    unit_slug: searchParams.get("unit_slug") || undefined,
-    check_in: searchParams.get("check_in"),
+  // Validate inputs against our simplified schema
+  const parse = AvailabilityParams.safeParse({
+    unit_id:   searchParams.get("unit_id"),
+    check_in:  searchParams.get("check_in"),
     check_out: searchParams.get("check_out") || undefined,
-    mode: (searchParams.get("mode") as any) || undefined,
+    mode:      (searchParams.get("mode") as any) || undefined, // appintments or reservations
   });
   if (!parse.success) {
     return NextResponse.json(
-      { ok: false, error: "bad_request", details: parse.error.flatten() },
+      { ok: false, error: "bad_request", details: toValidationDetails(parse.error) },
       { status: 400 }
     );
   }
-  const { unit_id, unit_slug, check_in, check_out, mode } = parse.data;
+
+  const { unit_id, check_in, check_out, mode: rawMode } = parse.data;
+
+  const mode = rawMode ?? 'reservations';
+
+  // Trace (super useful during integration)
+  console.log("[AVAIL] req", { tenantId, unit_id, check_in, check_out, mode });
 
   try {
     await dbConnect();
 
-    // 1) Resolve unit (by id or slug) and normalize
-    const rawUnit = unit_id
-      ? await UnitModel.findById(unit_id).lean()
-      : await UnitModel.findOne({ slug: unit_slug }).lean();
-
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1) Resolve Unit by tenant + unitId (string key).
+    //    If your model uses a different property name, change `unitId` below to match.
+    //    We DO NOT use findById or slug—string key only.
+    // ─────────────────────────────────────────────────────────────────────────
+    const rawUnit =
+      (await UnitModel.findOne({ tenantId, unit_id: unit_id }).lean())   
+    
     const unit = normalizeUnit(rawUnit);
+
     if (!unit) {
       return NextResponse.json(
         { ok: false, error: "not_found", reason_codes: ["UNIT_NOT_FOUND"] },
@@ -69,7 +112,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
       );
     }
 
-    // 2) Pick calendar link effective on check_in
+    // 2) Calendar link effective on check_in
     const link = pickCalendarLink(unit.calendars ?? [], check_in);
     if (!link) {
       const futureDates = (unit.calendars ?? [])
@@ -87,7 +130,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
       );
     }
 
-    const calendar: any = await CalendarModel.findById(link.calendarId).lean();
+    // 3) Load calendar by tenant + calendarId (string key)
+    const calendar =
+      (await CalendarModel.findOne({ tenantId, calendarId: link.calendarId }).lean()) ||
+      (await CalendarModel.findOne({ tenantId, id: link.calendarId }).lean()); // optional fallback
+
     if (!calendar) {
       return NextResponse.json(
         { ok: false, error: "calendar_missing", reason_codes: ["CALENDAR_NOT_FOUND"] },
@@ -95,7 +142,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
       );
     }
 
-    // 3) Evaluate rules (coerce leadTime numbers so TS is happy)
+    // 4) Evaluate rules
     const endInclusive = mode === "reservations" ? (check_out || check_in) : check_in;
 
     const calState = {
@@ -116,8 +163,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
     const evalRes = evaluateBookingServer(calState, {
       start: check_in,
       end: endInclusive,
-      mode,
+      mode: mode,
     });
+
     if (!evalRes.ok) {
       return NextResponse.json(
         { ok: false, reason_codes: evalRes.reason_codes },
@@ -125,10 +173,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
       );
     }
 
-    // 4) Overlap guard
+    // 5) Overlap guard
+    //    Use the same string key in reservations that you use in units (unitId or id).
+    const unitKey: string = unit_id; // resolve the actual string key you store
     const endExclusive = addDaysYmd(endInclusive, 1);
+
     const overlapItems = await Reservation.find({
-      unitId: unit._id,
+      tenantId,                               // scope to tenant
+      unitId: unitKey,                        // string key, NOT ObjectId
       status: { $in: ["hold", "confirmed"] },
       startDate: { $lt: toMidnightUTC(endExclusive) },
       endDate: { $gt: toMidnightUTC(check_in) },
@@ -152,11 +204,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
       );
     }
 
-    // 5) Success payload
+    // 6) Success payload (no images here; those live in "things" via your gateway)
     return NextResponse.json({
       ok: true,
       unit: {
-        id: String(unit._id),
+        id: unitKey,
         name: unit.name ?? "",
         unitNumber: unit.unitNumber || "",
         rate: Number(unit.rate || 0),

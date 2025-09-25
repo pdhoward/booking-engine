@@ -94,6 +94,10 @@ export default function UnitForm({
           <Input value={u.unit_id} onChange={(e) => setU({ ...u, unit_id: e.target.value })} className="h-9" />
         </div>
         <div>
+          <Label className="text-xs">Tenant ID</Label>
+          <Input value={u.tenantId} onChange={(e) => setU({ ...u, tenantId: e.target.value })} className="h-9" />
+        </div>
+        <div>
           <Label className="text-xs">Name</Label>
           <Input value={u.name} onChange={(e) => setU({ ...u, name: e.target.value })} className="h-9" />
         </div>
