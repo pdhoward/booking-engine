@@ -7,6 +7,8 @@ import { ReserveBodySchema } from "@/models/schemas";
 import { addDaysYmd, toMidnightUTC } from "@/lib/engine/date";
 import { pickCalendarLink } from "@/lib/engine/pickCalendar";
 
+import { Types } from "mongoose"; 
+
 // Narrow local type
 type LeanUnit = {
   _id: any;
@@ -38,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
       { status: 400 }
     );
   }
-  const { unit_id, check_in, check_out, guest } = parsed.data;
+  const { unit_id, check_in, check_out } = parsed.data;
 
   try {
     await dbConnect();
@@ -71,8 +73,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
 
     // 3) Overlap guard
     const endExclusive = addDaysYmd(check_out, 1);
+    const unitObjectId = typeof unit._id === "string" ? new Types.ObjectId(unit._id) : unit._id;
+
     const overlap = await Reservation.findOne({
-      unitId: unit._id,
+      unitId: unitObjectId,
       status: { $in: ["hold", "confirmed"] },
       startDate: { $lt: toMidnightUTC(endExclusive) },
       endDate: { $gt: toMidnightUTC(check_in) },
@@ -90,7 +94,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
 
     // 5) Persist
     const saved = await Reservation.create({
-      unitId: unit._id,
+      unitId: unitObjectId,
       unitName: unit.name ?? "",
       unitNumber: unit.unitNumber || "",
       calendarId: link.calendarId,
@@ -118,6 +122,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
         window: { check_in, check_out },
         policy: { cancelHours, cancelFee, currency },
         commercial: { nightly: rate, currency },
+        status: "confirmed"
       },
     });
   } catch (err: any) {
