@@ -32,8 +32,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
   const { searchParams } = new URL(req.url);
 
   const parse = QuoteQuerySchema.safeParse({
-    unit_id: searchParams.get("unit_id") || undefined,
-    unit_slug: searchParams.get("unit_slug") || undefined,
+    unit_id: searchParams.get("unit_id") || undefined,    
     check_in: searchParams.get("check_in"),
     check_out: searchParams.get("check_out"),
   });
@@ -43,14 +42,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ tena
       { status: 400 }
     );
   }
-  const { unit_id, unit_slug, check_in, check_out } = parse.data;
+  const { unit_id, check_in, check_out } = parse.data;
 
   try {
     await dbConnect();
 
-    const rawUnit = unit_id
-      ? await UnitModel.findById(unit_id).lean()
-      : await UnitModel.findOne({ slug: unit_slug }).lean();
+     const rawUnit =
+      (await UnitModel.findOne({ tenantId, unit_id: unit_id }).lean())   
 
     const unit = normalizeUnit(rawUnit);
     if (!unit) {
