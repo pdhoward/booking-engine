@@ -128,10 +128,12 @@ export async function GET(
       );
     }
 
-    // 3) Load calendar by tenant + calendarId (string key)
-    const calendar =
-      (await CalendarModel.findOne({ tenantId, calendarId: link.calendarId }).lean()) ||
-      (await CalendarModel.findOne({ tenantId, id: link.calendarId }).lean()); // optional fallback
+      console.log("[AVAIL] calendar_link", link);
+
+    // 3) Load calendar by _id (ObjectId). mongo will cast the hex string for you.
+      const calendar = await CalendarModel.findById(link.calendarId).lean();
+      // (optional) trace
+      console.log("[AVAIL] calendar_lookup", { calendarId: link.calendarId });
 
     if (!calendar) {
       return NextResponse.json(
