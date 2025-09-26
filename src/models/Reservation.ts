@@ -24,6 +24,6 @@ const reservationSchema = new Schema(
 );
 
 // overlap condition: req.start <= existing.end AND req.end >= existing.start
-reservationSchema.index({ unitId: 1, startDate: 1, endDate: 1, status: 1 });
+reservationSchema.index({ unitId: 1, status: 1, startDate: 1, endDate: 1 });
 
 export default mongoose.models.Reservation || mongoose.model("Reservation", reservationSchema);

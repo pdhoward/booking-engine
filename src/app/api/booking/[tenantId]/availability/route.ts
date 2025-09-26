@@ -9,6 +9,8 @@ import { addDaysYmd, toMidnightUTC } from "@/lib/engine/date";
 import { pickCalendarLink } from "@/lib/engine/pickCalendar";
 import { evaluateBookingServer } from "@/lib/engine/evaluateBookingOnServer";
 
+import { Types } from "mongoose"; 
+
 // Temp - use locally to quiet TS without changing your models
 type LeanUnit = {
   _id: any;
@@ -143,7 +145,7 @@ export async function GET(
     }
 
     // 4) Evaluate rules
-    const endInclusive = mode === "reservations" ? (check_out || check_in) : check_in;
+    const endInclusive = mode === "reservations" ? (check_out || check_in) : check_in;  
 
     const calState = {
       leadTime: {
@@ -173,14 +175,14 @@ export async function GET(
       );
     }
 
-    // 5) Overlap guard
-    //    Use the same string key in reservations that you use in units (unitId or id).
-    const unitKey: string = unit_id; // resolve the actual string key you store
+    // 5) Overlap guard - search reservations for any overlap in requested dates against 
+    // confirmed or hold dates for that unit
+    
+    const unitObjectId = typeof unit._id === "string" ? new Types.ObjectId(unit._id) : unit._id;
     const endExclusive = addDaysYmd(endInclusive, 1);
 
     const overlapItems = await Reservation.find({
-      tenantId,                               // scope to tenant
-      unitId: unitKey,                        // string key, NOT ObjectId
+      unitId: unitObjectId,  
       status: { $in: ["hold", "confirmed"] },
       startDate: { $lt: toMidnightUTC(endExclusive) },
       endDate: { $gt: toMidnightUTC(check_in) },
@@ -208,7 +210,7 @@ export async function GET(
     return NextResponse.json({
       ok: true,
       unit: {
-        id: unitKey,
+        id: unitObjectId,
         name: unit.name ?? "",
         unitNumber: unit.unitNumber || "",
         rate: Number(unit.rate || 0),
