@@ -1,4 +1,6 @@
+// app/api/booking/[tenantId]/reserve/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 import dbConnect from "@/lib/db";
 import { UnitModel } from "@/models/Unit";
 import Reservation from "@/models/Reservation";
@@ -6,23 +8,37 @@ import CalendarModel from "@/models/Calendar";
 import { ReserveBodySchema } from "@/models/schemas";
 import { addDaysYmd, toMidnightUTC } from "@/lib/engine/date";
 import { pickCalendarLink } from "@/lib/engine/pickCalendar";
+import { Types } from "mongoose";
 
-import { Types } from "mongoose"; 
-
-// Narrow local type
 type LeanUnit = {
   _id: any;
   name?: string;
   unitNumber?: string;
   rate?: number;
   currency?: string;
-  calendars?: Array<{
-    calendarId: any;
-    name: string;
-    version: number;
-    effectiveDate: string;
-  }>;
+  calendars?: Array<{ calendarId: any; name: string; version: number; effectiveDate: string }>;
 };
+
+/** Turn a ZodError into a stable JSON shape without using deprecated APIs. */
+function toValidationDetails(err: ZodError) {
+  // New Zod (preferred)
+  const treeify = (z as any).treeifyError as
+    | ((e: ZodError) => unknown)
+    | undefined;
+
+  if (typeof treeify === "function") {
+    return treeify(err); // rich, nested structure
+  }
+
+  // Fallback for older Zod: build a simple, flat summary from issues
+  return {
+    issues: err.issues.map((i) => ({
+      path: i.path.join("."),
+      code: i.code,
+      message: i.message,
+    })),
+  };
+}
 
 function normalizeUnit(u: any): LeanUnit | null {
   if (!u) return null;
@@ -30,23 +46,29 @@ function normalizeUnit(u: any): LeanUnit | null {
   return u as LeanUnit;
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ tenantId: string }> }) {
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ tenantId: string }> }
+) {
   const { tenantId } = await params;
   const body = await req.json();
+
   const parsed = ReserveBodySchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { ok: false, error: "bad_request", details: parsed.error.flatten() },
-      { status: 400 }
-    );
-  }
-  const { unit_id, check_in, check_out } = parsed.data;
+
+ if (!parsed.success) {
+     return NextResponse.json(
+       { ok: false, error: "bad_request", details: toValidationDetails(parsed.error) },
+       { status: 400 }
+     );
+   }
+
+  const { unit_id, check_in, check_out, guest, payment } = parsed.data;
 
   try {
     await dbConnect();
 
-    // 1) Resolve unit
-    const rawUnit = await UnitModel.findById(unit_id).lean();
+    // 1) Resolve unit (string key)
+    const rawUnit = await UnitModel.findOne({ tenantId, unit_id }).lean();
     const unit = normalizeUnit(rawUnit);
     if (!unit) {
       return NextResponse.json(
@@ -55,7 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
       );
     }
 
-    // 2) Calendar link (effective on check_in)
+    // 2) Calendar link effective on check_in
     const link = pickCalendarLink(unit.calendars ?? [], check_in);
     if (!link) {
       return NextResponse.json(
@@ -73,7 +95,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
 
     // 3) Overlap guard
     const endExclusive = addDaysYmd(check_out, 1);
-    const unitObjectId = typeof unit._id === "string" ? new Types.ObjectId(unit._id) : unit._id;
+    const unitObjectId =
+      typeof unit._id === "string" ? new Types.ObjectId(unit._id) : unit._id;
 
     const overlap = await Reservation.findOne({
       unitId: unitObjectId,
@@ -92,13 +115,47 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
     const cancelHours = Number(calendar?.cancelHours ?? 48);
     const cancelFee = Number(calendar?.cancelFee ?? 0);
 
-    // 5) Persist
+    // 5) Map guest & payment to schema-safe shapes (exclude any PAN/CVC if accidentally sent)
+    const guestDoc = guest
+      ? {
+          firstName: guest.first_name,
+          lastName: guest.last_name,
+          email: guest.email,
+          phone: guest.phone,
+          address: guest.address
+            ? {
+                line1: guest.address.line1,
+                line2: guest.address.line2,
+                city: guest.address.city,
+                state: guest.address.state,
+                postalCode: guest.address.postalCode,
+                country: guest.address.country,
+              }
+            : undefined,
+        }
+      : undefined;
+
+    const paymentDoc = payment
+      ? {
+          provider: payment.provider,
+          customerId: payment.customer_id,
+          methodId: payment.method_id,
+          intentId: payment.intent_id,
+          brand: payment.brand,
+          last4: payment.last4,
+          expMonth: payment.exp_month,
+          expYear: payment.exp_year,
+          holdAmount: payment.hold_amount ?? 0,
+          currency: payment.currency ?? currency,
+        }
+      : undefined;
+
+    // 6) Persist
     const saved = await Reservation.create({
       unitId: unitObjectId,
       unitName: unit.name ?? "",
       unitNumber: unit.unitNumber || "",
       calendarId: link.calendarId,
-      calendarName: link.name,
       startDate: toMidnightUTC(check_in),
       endDate: toMidnightUTC(endExclusive), // EXCLUSIVE
       rate,
@@ -106,8 +163,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
       cancelHours,
       cancelFee,
       status: "confirmed",
-      // embed a guest snapshot when needed:
-      // guestFirst: guest.first_name, guestLast: guest.last_name, ...
+      guest: guestDoc,
+      payment: paymentDoc,
     });
 
     return NextResponse.json({
@@ -122,7 +179,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ ten
         window: { check_in, check_out },
         policy: { cancelHours, cancelFee, currency },
         commercial: { nightly: rate, currency },
-        status: "confirmed"
+        guest: guestDoc ? { ...guestDoc, address: undefined } : undefined, // redact address if you want
+        payment: paymentDoc
+          ? {
+              provider: paymentDoc.provider,
+              methodId: paymentDoc.methodId,
+              brand: paymentDoc.brand,
+              last4: paymentDoc.last4,
+              expMonth: paymentDoc.expMonth,
+              expYear: paymentDoc.expYear,
+              holdAmount: paymentDoc.holdAmount,
+              currency: paymentDoc.currency,
+            }
+          : undefined,
+        status: "confirmed",
       },
     });
   } catch (err: any) {
