@@ -62,15 +62,14 @@ function humanAmenities(unit: any): string[] {
 /* --------------------------------- GET ---------------------------------- */
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: { tenantId: string } }
+   req: NextRequest,
+  { params }: { params: Promise<{ tenantId: string }> }
 ) {
+  const { tenantId } = await params;
   try {
     if (!isAuthorized(req)) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-    }
-
-    const tenantId = params.tenantId;
+    }    
     if (!tenantId) {
       return NextResponse.json({ ok: false, error: "Missing tenantId" }, { status: 400 });
     }
