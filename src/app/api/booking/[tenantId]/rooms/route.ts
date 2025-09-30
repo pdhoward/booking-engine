@@ -53,7 +53,7 @@ function toMediaArray(unit: any) {
           kind: "image" as const,
           src,
           alt: entry?.alt ?? "",
-          // you can optionally add width/height if you store them
+          // add width/height if needed
         };
       }
     })
