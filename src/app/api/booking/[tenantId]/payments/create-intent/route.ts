@@ -29,7 +29,7 @@ async function getStripeForTenant(tenantId?: string) {
   // v1: env fallback; replace with per-tenant secret lookup when ready
   const secret = process.env.STRIPE_VOX_SECRET_KEY;
   if (!secret) throw new Error("Stripe secret key missing.");
-  return new Stripe(secret /* , { apiVersion: '2024-06-20' as any } */);
+  return new Stripe(secret);
 }
 
 export async function POST(req: NextRequest) {
