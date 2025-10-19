@@ -6,19 +6,11 @@ import dbConnect from "@/lib/db";
 import { PaymentModel } from "@/models/Payment";
 
 // ---------- Schemas (robust to agent/executor templating) ----------
-
-const CustomerSchema = z.object({
-  name: z.string().optional(),
-  email: z.string().email().optional(),
-  phone: z.string().optional(),
-});
-
 const BodySchema = z.object({
-  // accept both snake & camel
   tenant_id: z.string().optional(),
   tenantId: z.string().optional(),
 
-  // accept "79000" (string) or 79000 (number)
+  // Accept strings or numbers; coerce to int
   amount_cents: z.coerce.number().int().positive().optional(),
   amountCents: z.coerce.number().int().positive().optional(),
 
@@ -27,20 +19,8 @@ const BodySchema = z.object({
   reservation_id: z.string().optional(),
   reservationId: z.string().optional(),
 
-  // accept object OR JSON string; ignore unparseable strings like "[object Object]"
-  customer: z
-    .preprocess((v) => {
-      if (typeof v === "string") {
-        try {
-          const parsed = JSON.parse(v);
-          return parsed && typeof parsed === "object" ? parsed : undefined;
-        } catch {
-          return undefined;
-        }
-      }
-      return v;
-    }, CustomerSchema)
-    .optional(),
+  // 👇 this is an object but allow anything; normalize after parsing
+  customer: z.any().optional(),
 });
 
 type Input = z.infer<typeof BodySchema>;
@@ -72,7 +52,30 @@ export async function POST(req: NextRequest) {
     const amountCents = b.amount_cents ?? b.amountCents;
     const currency = (b.currency ?? "USD").trim().toUpperCase();
     const reservationId = b.reservation_id ?? b.reservationId ?? null;
-    const customer = b.customer; // already parsed/validated (or undefined)
+
+    // 👇 Normalize customer: accept object, JSON string, or ignore garbage
+    let customer: undefined | { name?: string; email?: string; phone?: string };
+    if (typeof b.customer === "string") {
+      try {
+        const obj = JSON.parse(b.customer);
+        if (obj && typeof obj === "object") {
+          customer = {
+            name: typeof obj.name === "string" ? obj.name : undefined,
+            email: typeof obj.email === "string" ? obj.email : undefined,
+            phone: typeof obj.phone === "string" ? obj.phone : undefined,
+          };
+        }
+      } catch {
+        // ignore unparsable strings like "[object Object]"
+      }
+    } else if (b.customer && typeof b.customer === "object") {
+      const obj = b.customer as Record<string, unknown>;
+      customer = {
+        name: typeof obj.name === "string" ? obj.name : undefined,
+        email: typeof obj.email === "string" ? obj.email : undefined,
+        phone: typeof obj.phone === "string" ? obj.phone : undefined,
+      };
+    }
 
     if (!tenantId || !amountCents) {
       return NextResponse.json(
@@ -86,7 +89,7 @@ export async function POST(req: NextRequest) {
 
     const stripe = await getStripeForTenant(tenantId);
 
-    // (Optional) create/reuse customer by email scoped to tenant
+    //  create/reuse customer by email scoped to tenant
     let customerId: string | undefined;
     if (customer?.email) {
       const query = `email:'${customer.email.replace(/'/g, "\\'")}' AND metadata['tenantId']:'${tenantId}'`;
