@@ -28,6 +28,7 @@ type Input = z.infer<typeof BodySchema>;
 async function getStripeForTenant(tenantId?: string) {
   // v1: env fallback; replace with per-tenant secret lookup when ready
   const secret = process.env.STRIPE_VOX_SECRET_KEY;
+   console.log(secret)
   if (!secret) throw new Error("Stripe secret key missing.");
   return new Stripe(secret);
 }
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest) {
   try {
     const raw = await req.json();
     const parsed = BodySchema.safeParse(raw);
+    console.log(`----booking engine payments -----`)
+    console.log(`parsed = ${JSON.stringify(parsed)}`)
+   
     if (!parsed.success) {
       return NextResponse.json(
         { error: "invalid_input", issues: parsed.error.issues },
@@ -58,6 +62,7 @@ export async function POST(req: NextRequest) {
     }
 
     const stripe = await getStripeForTenant(tenantId);
+    console.log(`tenant is ${tenantId}`)
 
     // Optional: create/reuse customer by email scoped to tenant
     let customerId: string | undefined;
@@ -92,6 +97,10 @@ export async function POST(req: NextRequest) {
       idemKey ? { idempotencyKey: idemKey } : undefined
     );
 
+    console.log(`reservationid is ${reservationId}`)
+    console.log(`customer id is ${customerId}`)
+    console.log(`intent is ${JSON.stringify(intent)}`)
+
     // DB upsert (Mongoose)
     await dbConnect();
     await PaymentModel.findOneAndUpdate(
@@ -99,6 +108,7 @@ export async function POST(req: NextRequest) {
       {
         $setOnInsert: {
           tenantId,
+          customerId,
           reservationId: reservationId ?? null,
           amountCents,
           currency,
