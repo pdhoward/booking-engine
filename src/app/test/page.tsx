@@ -2,41 +2,42 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import Link from "next/link"
+import Link from "next/link";
 import type { Unit } from "@/types/unit";
-import { CalendarCategory } from "@/types/calendar";
+import type { CalendarState, CalendarCategory } from "@/types/calendar";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import {
-  Calendar as CalendarIcon,
-} from "lucide-react";
+import { Calendar as CalendarIcon } from "lucide-react";
 
 import { fetchAllUnits, fetchUnitById } from "@/lib/api/units";
 import { fetchCalendarById } from "@/lib/api/calendars";
 import { evaluateBookingRequest } from "@/lib/engine/evaluateBooking";
 import { createReservation, checkReservationOverlap } from "@/lib/api/reservations";
-
 import { DatePicker } from "@/components/DatePicker";
 
-// ---- date helpers (UTC-ymd safe) ----
+/* ------------------------------ date helpers ------------------------------ */
+/** normalize to UTC midnight ymd */
 const toMidnightUTC = (isoYmd: string) => new Date(`${isoYmd}T00:00:00Z`);
 const toYMD = (d: Date | string) => {
   const x = typeof d === "string" ? new Date(d) : d;
-  return new Date(Date.UTC(x.getFullYear(), x.getMonth(), x.getDate())).toISOString().slice(0, 10);
+  const utc = new Date(Date.UTC(x.getFullYear(), x.getMonth(), x.getDate()));
+  return utc.toISOString().slice(0, 10);
 };
-const addDaysYmd = (ymd: string, days: number) => toYMD(new Date(Date.parse(ymd) + days * 86400000));
-function nightsBetween(startYmd: string, endYmd: string) {
+const addDaysYmd = (ymd: string, days: number) => {
+  const base = toMidnightUTC(ymd).getTime();
+  return new Date(base + days * 86400000).toISOString().slice(0, 10);
+};
+function nightsBetween(startYmd: string, endInclusiveYmd: string) {
   const s = toMidnightUTC(startYmd).getTime();
-  const e = toMidnightUTC(endYmd).getTime();
+  const e = toMidnightUTC(endInclusiveYmd).getTime();
   return Math.max(1, Math.round((e - s) / 86400000) || 1);
 }
 
-// ---- small presentational bits ----
+/* ----------------------------- small UI helper ---------------------------- */
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2">
@@ -46,6 +47,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
+/* ---------------------------------- page ---------------------------------- */
 export default function TestBookingPage() {
   // data
   const [units, setUnits] = useState<Unit[]>([]);
@@ -54,8 +56,6 @@ export default function TestBookingPage() {
   // inputs
   const [selectedUnitId, setSelectedUnitId] = useState<string>("");
   const [mode, setMode] = useState<CalendarCategory>("reservations");
-  //const [startYmd, setStartYmd] = useState("");
-  //const [endYmd, setEndYmd] = useState("");
 
   // result / confirmation
   const [result, setResult] = useState<{ ok: boolean; reasons: string[] } | null>(null);
@@ -77,10 +77,11 @@ export default function TestBookingPage() {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
 
-  // derive ymd strings where you previously used startYmd/endYmd:
+  // derive ymd strings
   const startYmd = useMemo(() => (startDate ? toYMD(startDate) : ""), [startDate]);
   const endYmd = useMemo(() => (endDate ? toYMD(endDate) : ""), [endDate]);
 
+  // load units once
   useEffect(() => {
     (async () => {
       setLoadingUnits(true);
@@ -99,21 +100,28 @@ export default function TestBookingPage() {
   }, [unit]);
 
   // choose latest effective calendar <= start
-  function pickCalendarLink(links: any[], start: string) {
-    const sMs = Date.parse(start);
+  function pickCalendarLink(
+    links: Array<{ calendarId: string; name: string; version: number; effectiveDate: string } | any>,
+    startIsoYmd: string
+  ) {
+    const sMs = Date.parse(startIsoYmd);
     const normalized = (links ?? []).map((l) => ({
       calendarId: String(l.calendarId),
       name: String(l.name ?? ""),
       version: Number(l.version ?? 1),
-      effectiveDate: toYMD(l.effectiveDate),
+      effectiveDate: toYMD(l.effectiveDate), // normalize whatever shape
     }));
     const eligible = normalized
       .filter((l) => Number.isFinite(Date.parse(l.effectiveDate)) && Date.parse(l.effectiveDate) <= sMs)
       .sort((a, b) => Date.parse(a.effectiveDate) - Date.parse(b.effectiveDate));
-    return eligible.at(-1);
+    return eligible.at(-1) ?? null;
   }
 
-  // availability w/ overlap check
+  // derived booleans for buttons
+  const canCheck = !!selectedUnitId && !!startYmd && (mode === "appointments" || !!endYmd || true);
+  const canConfirm = !!result?.ok && !!unit;
+
+  /* ---------------------------- availability check ---------------------------- */
   const checkAvailability = async () => {
     setChecking(true);
     // reset UI slice
@@ -139,7 +147,7 @@ export default function TestBookingPage() {
 
       // load full unit
       let full = await fetchUnitById(String(brief._id)).catch(() => null);
-      full = full ?? brief;
+      full = (full as Unit | null) ?? brief;
 
       // calendar selection
       const link = pickCalendarLink(full.calendars ?? [], startYmd);
@@ -177,7 +185,12 @@ export default function TestBookingPage() {
         return;
       }
 
-      const evalRes = evaluateBookingRequest(calendar, { start: startYmd, end: endInclusive, mode });
+      // engine/policy evaluation (client-only)
+      const evalRes = evaluateBookingRequest(calendar as CalendarState, {
+        start: startYmd,
+        end: endInclusive,
+        mode,
+      });
       setUnit(full);
       setCalInfo({ name: calendar.name, version: calendar.version });
 
@@ -193,7 +206,7 @@ export default function TestBookingPage() {
       setResult({
         ok: true,
         reasons: [
-          `Rate: ${full.currency} ${total} (${nights} night${nights > 1 ? "s" : ""})`,
+          `Rate: ${full.currency || "USD"} ${total} (${nights} night${nights > 1 ? "s" : ""})`,
           `Cancel: ${calendar.cancelHours}h notice, fee ${calendar.currency} ${calendar.cancelFee}`,
           `Calendar: ${link.name} v${link.version} (eff ${link.effectiveDate})`,
         ],
@@ -203,9 +216,9 @@ export default function TestBookingPage() {
     }
   };
 
-  // confirm → persist and replace with confirmation card
+  /* ------------------------------- confirmation ------------------------------ */
   const confirmReservation = async () => {
-    if (!result?.ok || !unit) return;
+    if (!canConfirm || !unit) return;
     setConfirming(true);
     try {
       const endInclusive = mode === "reservations" ? (endYmd || startYmd) : startYmd;
@@ -222,7 +235,7 @@ export default function TestBookingPage() {
         unitNumber: unit.unitNumber || "",
         calendarId: link.calendarId,
         calendarName: link.name,
-        startYmd,            // inclusive
+        startYmd,             // inclusive
         endYmd: endExclusive, // EXCLUSIVE for API
         rate: Number(unit.rate || 0),
         currency: unit.currency || "USD",
@@ -231,7 +244,7 @@ export default function TestBookingPage() {
       // success → show confirmation card
       setResult(null);
       setConfirmation({
-        id: saved._id,
+        id: String(saved._id),
         unitLabel: `${unit.name}${unit.unitNumber ? ` #${unit.unitNumber}` : ""}`,
         startYmd,
         endYmd: endInclusive,
@@ -249,6 +262,7 @@ export default function TestBookingPage() {
     setUnit(null);
     setCalInfo(null);
     setQuotedTotal(null);
+    // keep selections for convenience
   };
 
   return (
@@ -264,10 +278,9 @@ export default function TestBookingPage() {
             >
               <CalendarIcon className="h-5 w-5" aria-hidden="true" />
               <span className="font-semibold tracking-tight">Booking Engine</span>
-              {/* Divider dot + subtitle */}
               <span className="text-muted-foreground">•</span>
-              <span className="text-sm text-muted-foreground">Test Reservation Workflow </span>
-            </Link>            
+              <span className="text-sm text-muted-foreground">Test Reservation Workflow</span>
+            </Link>
             {unit && !confirmation && <Badge className="ml-2">{chosenUnitLabel}</Badge>}
           </div>
         </div>
@@ -280,17 +293,21 @@ export default function TestBookingPage() {
             <div>
               <Label className="text-xs">Unit</Label>
               <Select value={selectedUnitId} onValueChange={setSelectedUnitId}>
-                <SelectTrigger className="h-9"><SelectValue placeholder="Choose unit" /></SelectTrigger>
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Choose unit" />
+                </SelectTrigger>
                 <SelectContent>
                   {loadingUnits && <div className="px-2 py-1 text-xs text-muted-foreground">Loading…</div>}
                   {!loadingUnits && units.length === 0 && (
                     <div className="px-2 py-1 text-xs text-muted-foreground">No units</div>
                   )}
-                  {!loadingUnits && units.map((u) => (
-                    <SelectItem key={String(u._id)} value={String(u._id)}>
-                      {u.name}{u.unitNumber ? ` #${u.unitNumber}` : ""}
-                    </SelectItem>
-                  ))}
+                  {!loadingUnits &&
+                    units.map((u) => (
+                      <SelectItem key={String(u._id)} value={String(u._id)}>
+                        {u.name}
+                        {u.unitNumber ? ` #${u.unitNumber}` : ""}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -299,7 +316,9 @@ export default function TestBookingPage() {
             <div>
               <Label className="text-xs">Mode</Label>
               <Select value={mode} onValueChange={(v: CalendarCategory) => setMode(v)}>
-                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="reservations">Reservations</SelectItem>
                   <SelectItem value="appointments">Appointments</SelectItem>
@@ -307,14 +326,13 @@ export default function TestBookingPage() {
               </Select>
             </div>
 
-            {/* Dates */}
             {/* Start date */}
             <div>
               <Label className="text-xs">Start</Label>
               <DatePicker
                 value={startDate}
                 onChange={(d) => {
-                  setStartDate(d);
+                  setStartDate(d ?? undefined);
                   // if checkout is before start (or unset), nudge it to start
                   if (d && endDate && endDate < d) setEndDate(d);
                 }}
@@ -323,26 +341,23 @@ export default function TestBookingPage() {
               />
             </div>
 
-           {/* End date (reservations only) */}
+            {/* End date (reservations only) */}
             {mode === "reservations" && (
               <div>
                 <Label className="text-xs">End</Label>
                 <DatePicker
                   value={endDate}
-                  onChange={setEndDate}
+                  onChange={(d) => setEndDate(d ?? undefined)}
                   numberOfMonths={2}
-                  // open the calendar at the same month as the check-in (e.g., December)
                   defaultMonth={startDate}
-                  // disable any dates before the check-in
                   disabled={startDate ? { before: startDate } : undefined}
-                  // visually mark the check-in date inside the checkout calendar
                   modifiers={startDate ? { checkin: startDate } : undefined}
                   placeholder="Select check-out"
                 />
               </div>
             )}
 
-            <Button className="w-full" onClick={checkAvailability} disabled={checking}>
+            <Button className="w-full" onClick={checkAvailability} disabled={checking || !canCheck}>
               {checking ? "Checking…" : "Check availability"}
             </Button>
 
@@ -353,10 +368,10 @@ export default function TestBookingPage() {
                   <div className="font-medium text-green-700">Reservation confirmed</div>
                   <div className="text-sm space-y-1">
                     <Row label="Unit">{confirmation.unitLabel}</Row>
-                    <Row label="Dates">{confirmation.startYmd} → {confirmation.endYmd}</Row>
-                    <div className="text-xs text-muted-foreground">
-                      Your booking has been saved successfully.
-                    </div>
+                    <Row label="Dates">
+                      {confirmation.startYmd} → {confirmation.endYmd}
+                    </Row>
+                    <div className="text-xs text-muted-foreground">Your booking has been saved successfully.</div>
                   </div>
                   <div className="pt-2">
                     <Button size="sm" variant="outline" onClick={resetQuote}>
@@ -379,7 +394,8 @@ export default function TestBookingPage() {
                     <div className="text-sm space-y-1">
                       <Row label="Unit">{chosenUnitLabel}</Row>
                       <Row label="Dates">
-                        {startYmd}{mode === "reservations" ? ` → ${endYmd || startYmd}` : ""}
+                        {startYmd}
+                        {mode === "reservations" ? ` → ${endYmd || startYmd}` : ""}
                       </Row>
                       {calInfo && (
                         <div className="text-xs text-muted-foreground">
@@ -387,13 +403,12 @@ export default function TestBookingPage() {
                         </div>
                       )}
                       <Row label="Rate">
-                        {unit.currency} {unit.rate}{mode === "reservations" ? " /night" : ""}
+                        {(unit.currency || "USD")} {unit.rate}
+                        {mode === "reservations" ? " /night" : ""}
                       </Row>
-                      {quotedTotal !== null && (
-                        <Row label="Total">{unit.currency} {quotedTotal}</Row>
-                      )}
+                      {quotedTotal !== null && <Row label="Total">{unit.currency || "USD"} {quotedTotal}</Row>}
                       <div className="flex gap-2 pt-2">
-                        <Button size="sm" onClick={confirmReservation} disabled={confirming}>
+                        <Button size="sm" onClick={confirmReservation} disabled={confirming || !canConfirm}>
                           {confirming ? "Saving…" : "Confirm"}
                         </Button>
                         <Button size="sm" variant="outline" onClick={resetQuote}>
@@ -405,7 +420,9 @@ export default function TestBookingPage() {
 
                   {!result.ok && (
                     <ul className="mt-1 list-disc pl-5 text-sm">
-                      {result.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                      {result.reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
                     </ul>
                   )}
                 </CardContent>
