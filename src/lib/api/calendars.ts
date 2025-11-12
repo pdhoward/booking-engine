@@ -1,3 +1,4 @@
+// lib/api/calendars.ts
 // What: Client-safe helpers to call your Next API routes.
 
 import { CalendarState, CatalogRow } from "@/types/calendar";
@@ -5,9 +6,15 @@ import { isIsoDate } from "@/lib/utils";
 
 const API_BASE = "/api/calendars";
 
-function ymd(d: any): string {
-  const iso = typeof d === "string" ? d : new Date(d).toISOString();
-  return iso.slice(0, 10);
+/* -------------------------------------------------
+ * Utility helpers
+ * ------------------------------------------------- */
+
+function ymd(input: any): string {
+  const d = typeof input === "string" ? new Date(input) : input;
+  return d instanceof Date && !isNaN(d.getTime())
+    ? d.toISOString().slice(0, 10)
+    : String(input ?? "");
 }
 
 function safeParseRules(json: string): any[] {
@@ -19,34 +26,58 @@ function safeParseRules(json: string): any[] {
   }
 }
 
-export function normalizeCalendar(doc: any): CalendarState {
+/* -------------------------------------------------
+ * Normalization / Denormalization
+ * ------------------------------------------------- */
+
+export function normalizeCalendarFromServer(doc: any): CalendarState {
   return {
-    _id: String(doc._id),
+    _id: String(doc._id ?? ""),
     name: doc.name ?? "",
     owner: doc.owner ?? "",
-    category: (doc.category ?? "reservations"),
+    category: doc.category ?? "reservations",
     currency: doc.currency ?? "USD",
-    cancelHours: Number(doc.cancelHours ?? doc.cancellationPolicy?.hours ?? 48),
-    cancelFee: Number(doc.cancelFee ?? doc.cancellationPolicy?.fee ?? 0),
+    cancelHours: Number(doc.cancelHours ?? 48),
+    cancelFee: Number(doc.cancelFee ?? 0),
     version: Number(doc.version ?? 1),
     active: Boolean(doc.active ?? true),
     blackouts: (doc.blackouts ?? []).map(ymd),
-    recurringBlackouts: doc.recurringBlackouts || undefined,
+    recurringBlackouts: doc.recurringBlackouts || null,
     holidays: (doc.holidays ?? []).map((h: any) => ({ date: ymd(h.date), minNights: Number(h.minNights ?? 1) })),
     minStayByWeekday: doc.minStayByWeekday ?? {},
     seasons: (doc.seasons ?? []).map((s: any) => ({ start: ymd(s.start), end: ymd(s.end), price: Number(s.price ?? 0) })),
     leadTime: doc.leadTime ?? { minDays: 0, maxDays: 365 },
-    rulesJson: JSON.stringify(doc.rules ?? [], null, 2),
+    rules: Array.isArray(doc.rules) ? doc.rules : [], // ✅ use rules directly
   };
 }
+
+export function denormalizeCalendarForServer(state: CalendarState): any {
+  const { _id, ...rest } = state;
+  return {
+    ...rest,
+    blackouts: rest.blackouts.map(ymd),
+    recurringBlackouts: rest.recurringBlackouts || undefined,
+    holidays: rest.holidays.map((h) => ({ date: ymd(h.date), minNights: h.minNights })),
+    seasons: rest.seasons.map((s) => ({ start: ymd(s.start), end: ymd(s.end), price: s.price })),
+    rules: rest.rules ?? [], // ✅ already structured
+  };
+}
+
+
+/* -------------------------------------------------
+ * API Calls
+ * ------------------------------------------------- */
 
 export async function fetchAllCalendars(): Promise<CatalogRow[]> {
   const res = await fetch(`${API_BASE}`, { cache: "no-store" });
   if (!res.ok) throw new Error("Failed to load calendars");
+
   const data = await res.json();
-  return (data as any[]).map((d) => ({
+  if (!Array.isArray(data)) return [];
+
+  return data.map((d: any) => ({
     _id: String(d._id),
-    name: String(d.name),
+    name: String(d.name ?? "Unnamed"),
     version: Number(d.version ?? 1),
     active: Boolean(d.active),
   }));
@@ -55,38 +86,36 @@ export async function fetchAllCalendars(): Promise<CatalogRow[]> {
 export async function fetchCalendarById(id: string): Promise<CalendarState | null> {
   const res = await fetch(`${API_BASE}/${id}`, { cache: "no-store" });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error("Failed to load calendar");
+  if (!res.ok) throw new Error(`Failed to load calendar: ${res.statusText}`);
+
   const doc = await res.json();
-  return normalizeCalendar(doc);
+  return normalizeCalendarFromServer(doc);
 }
 
 export async function saveCalendar(
-  payload: CalendarState,
+  state: CalendarState,
   opts?: { mode?: "version" | "overwrite" }
 ): Promise<{ id: string; doc: CalendarState }> {
-  const { _id, rulesJson, ...rest } = payload;
+  const body = denormalizeCalendarForServer(state);
+  if (opts?.mode) body.mode = opts.mode;
 
-  const body = {
-    ...rest,
-    blackouts: rest.blackouts.map(ymd),
-    recurringBlackouts: rest.recurringBlackouts || undefined,
-    holidays: rest.holidays.map((h) => ({ date: ymd(h.date), minNights: h.minNights })),
-    seasons: rest.seasons.map((s) => ({ start: ymd(s.start), end: s.end, price: s.price })),
-    rules: safeParseRules(rulesJson),
-    ...(opts?.mode ? { mode: opts.mode } : {}),
-  };
+  const method = state._id ? "PATCH" : "POST";
+  const url = `${API_BASE}${state._id ? `/${state._id}` : ""}`;
 
-  const res = await fetch(`${API_BASE}${_id ? `/${_id}` : ""}`, {
-    method: _id ? "PATCH" : "POST",
-    headers: { "content-type": "application/json" },
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error || "Save failed");
+    const errJson = await res.json().catch(() => ({}));
+    throw new Error(errJson?.error || `Save failed (${res.status})`);
   }
 
   const saved = await res.json();
-  return { id: String(saved._id), doc: normalizeCalendar(saved) };
+  return {
+    id: String(saved._id ?? state._id ?? ""),
+    doc: normalizeCalendarFromServer(saved),
+  };
 }

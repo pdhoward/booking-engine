@@ -205,7 +205,7 @@ export default function CalendarGrid({
     <div className="space-y-2">
       {/* Custom slim toolbar */}
       <div className="flex items-center justify-between px-1">
-        <div className="text-sm font-semibold truncate">{title}</div>
+        <div className="text-lg font-bold tracking-tight truncate">{title}</div>
         <div className="flex items-center gap-1">
           <Button variant="outline" size="icon" className="h-8 w-8" onClick={goPrev}>
             <ChevronLeft className="h-4 w-4" />
