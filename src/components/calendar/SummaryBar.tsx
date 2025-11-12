@@ -1,9 +1,7 @@
+// components/calendar/SummaryBar.tsx
 "use client";
 
-// What: Small top-of-body bar that shows summary chips and lets you open
-//       a JSON rules dialog + clear selections.
-
-import React, { useMemo } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { CalendarState } from "@/types/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,23 +27,75 @@ export default function SummaryBar({ cal, setCal }: Props) {
     return out;
   }, [cal]);
 
+  // Rules editor buffer
+  const [open, setOpen] = useState(false);
+  const [rulesText, setRulesText] = useState<string>("[]");
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    if (open) {
+      setRulesText(JSON.stringify(cal.rules ?? [], null, 2));
+      setError("");
+    }
+  }, [open, cal.rules]);
+
+  const applyRules = () => {
+    try {
+      const parsed = JSON.parse(rulesText ?? "[]");
+      if (!Array.isArray(parsed)) throw new Error("Rules must be an array.");
+      setCal((p) => ({ ...p, rules: parsed }));
+      setError("");
+      setOpen(false);
+    } catch (e: any) {
+      setError(e?.message || "Invalid JSON");
+    }
+  };
+
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
       {chips}
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => setCal((p) => ({ ...p, blackouts: [], holidays: [], recurringBlackouts: undefined }))}>
-          <RotateCcw className="h-4 w-4 mr-2" />Clear
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            setCal((p) => ({
+              ...p,
+              blackouts: [],
+              holidays: [],
+              recurringBlackouts: null, // keep type stable
+            }))
+          }
+        >
+          <RotateCcw className="h-4 w-4 mr-2" />
+          Clear
         </Button>
-        <Dialog>
+
+        <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button variant="ghost" size="sm"><ListChecks className="h-4 w-4 mr-2" />Rules JSON</Button>
+            <Button variant="ghost" size="sm">
+              <ListChecks className="h-4 w-4 mr-2" />
+              Rules JSON
+            </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-[720px]">
-            <DialogHeader><DialogTitle>Engine Rules JSON</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>Engine Rules JSON</DialogTitle>
+            </DialogHeader>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
               <div>
-                <Label className="text-xs">Paste/Edit</Label>
-                <Textarea value={cal.rulesJson} onChange={(e) => setCal((p) => ({ ...p, rulesJson: e.target.value }))} rows={16} />
+                <Label className="text-xs">Paste/Edit (Array)</Label>
+                <Textarea
+                  value={rulesText}
+                  onChange={(e) => setRulesText(e.target.value)}
+                  rows={16}
+                />
+                {error && (
+                  <div className="text-xs text-red-600 mt-1">{error}</div>
+                )}
+                <div className="mt-2">
+                  <Button size="sm" onClick={applyRules}>Apply</Button>
+                </div>
               </div>
               <div>
                 <Label className="text-xs">State Snapshot</Label>
@@ -57,7 +107,8 @@ export default function SummaryBar({ cal, setCal }: Props) {
                       recurringBlackouts: cal.recurringBlackouts,
                       minStayByWeekday: cal.minStayByWeekday,
                       seasons: cal.seasons,
-                      leadTime: cal.leadTime
+                      leadTime: cal.leadTime,
+                      rules: cal.rules,
                     },
                     null,
                     2

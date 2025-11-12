@@ -149,20 +149,36 @@
 /* avoid outlines inside FC that can mask borders */
 .fc, .fc * { outline: none !important; }
 
-/* make holiday pills compact */
-.fc .fc-holiday-pill {
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  line-height: 1.2;
-  color: #f59e0b;
+/* Holiday events: rich gold */
+.fc-holiday-pill {
+  background-color: #b45309 !important; /* amber-700 */
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Blackout background (full-cell dim overlay) */
+.fc-blackout {
+  background-color: rgba(31, 41, 55, 0.7) !important; /* gray-800 w/ opacity */
+  color: #ffffff !important;
 }
 
 /* make reservation pills compact */
 /* small rounded foreground pill */
-.fc-reservation-pill {  
-  border-radius: 9999px;
-  padding: 0 6px;
-  font-weight: 600;
+/* Darker blue style for reservation chips */
+.fc-reservation-pill {
+  background-color: #1e40af !important; /* dark blue (Tailwind's blue-800) */
+  border: none !important;
+  color: white !important;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+.fc .fc-event .fc-event-main {
+  display: inline-block;
 }
 

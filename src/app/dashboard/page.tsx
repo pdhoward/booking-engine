@@ -1,3 +1,4 @@
+// app/dashboard/page.tsx
 "use client";
 
 import React, { useEffect, useState, useMemo } from "react";
@@ -12,9 +13,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { UploadCloud, RotateCcw } from "lucide-react";
 
-import type { EventInput } from "@fullcalendar/core";
-import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
+import type { CalendarState, CatalogRow } from "@/types/calendar";
 import { fetchAllCalendars, saveCalendar } from "@/lib/api/calendars";
+import {
+  normalizeCalendarFromServer,
+  denormalizeCalendarForServer,
+} from "@/lib/calendar/normalize";
 
 export default function BookingEnginePage() {
   const router = useRouter();
@@ -23,64 +27,86 @@ export default function BookingEnginePage() {
   const [loadingCatalog, setLoadingCatalog] = useState(true);
 
   const [cal, setCal] = useState<CalendarState>(() => ({
-    name: "", owner: "", category: "reservations", currency: "USD",
-    cancelHours: 48, cancelFee: 0, version: 1, active: true,
-    blackouts: [], holidays: [], minStayByWeekday: {}, seasons: [],
-    leadTime: { minDays: 0, maxDays: 365 }, rulesJson: "[]",
+    name: "",
+    owner: "",
+    category: "reservations",
+    currency: "USD",
+    cancelHours: 48,
+    cancelFee: 0,
+    version: 1,
+    active: true,
+    blackouts: [],
+    recurringBlackouts: null,
+    holidays: [],
+    minStayByWeekday: {},
+    seasons: [],
+    leadTime: { minDays: 0, maxDays: 365 },
+    rules: [],
   }));
 
-  const [reservationEvents, setReservationEvents] = useState<EventInput[]>([]);
+  const [view, setView] = useState<
+    "dayGridMonth" | "timeGridWeek" | "timeGridDay" | "multiMonthYear"
+  >("dayGridMonth");
+  const [addMode, setAddMode] = useState<"cursor" | "blackout" | "holiday">(
+    "cursor"
+  );
 
-  const [view, setView] = useState<"dayGridMonth" | "timeGridWeek" | "timeGridDay" | "multiMonthYear">("dayGridMonth");
-  const [addMode, setAddMode] = useState<"cursor" | "blackout" | "holiday">("cursor");
+  const [savedSnapshot, setSavedSnapshot] = useState<CalendarState | null>(
+    null
+  );
 
-  const [savedSnapshot, setSavedSnapshot] = useState<CalendarState | null>(null);
-
+  // Load catalog (list of calendars) for HeaderBar dropdown, etc.
   useEffect(() => {
     (async () => {
       setLoadingCatalog(true);
       try {
         const rows = await fetchAllCalendars();
-        setCatalog(rows.filter(r => typeof r._id === "string" && r._id.length > 0));
+        setCatalog(
+          rows.filter((r) => typeof r._id === "string" && r._id.length > 0)
+        );
       } finally {
         setLoadingCatalog(false);
       }
     })();
   }, []);
 
-  // set initial snapshot once (new page load)
+  // On first mount, prime savedSnapshot so dirty-check starts from initial state
   useEffect(() => {
     if (savedSnapshot === null) setSavedSnapshot(cal);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // compute "dirty" using a simple deep compare
+  // Dirty-check: shapes match because we normalize both cal & savedSnapshot
   const isDirty = useMemo(() => {
     if (!savedSnapshot) return false;
     return JSON.stringify(cal) !== JSON.stringify(savedSnapshot);
   }, [cal, savedSnapshot]);
 
-  // refresh the snapshot with the server-truth
+  // Save handler
   const handleSave = async () => {
-    const payload = { ...cal };
+    // Prepare client state for server
+    const payload = denormalizeCalendarForServer(cal);
     const { id, doc } = await saveCalendar(payload);
-    setCal({ ...doc, _id: id });
-    setSavedSnapshot(doc);  // ✅ reset "dirty" after successful save
+
+    // Normalize server doc back into client shape (and include id)
+    const next = normalizeCalendarFromServer({ ...doc, _id: id });
+    setCal(next);
+    setSavedSnapshot(next); // ✅ prevents perpetual "dirty"
     router.refresh?.();
   };
 
-  // Warn on tab close if there are unsaved changes
+  // Tab-close warning on unsaved changes
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (!isDirty) return;
       e.preventDefault();
-      e.returnValue = ""; // required by some browsers
+      e.returnValue = "";
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
-  // --- when resetting to a new calendar, also refresh snapshot
+  // Reset to blank, normalized state
   const resetToNew = () => {
     const next: CalendarState = {
       name: "",
@@ -92,15 +118,28 @@ export default function BookingEnginePage() {
       version: 1,
       active: true,
       blackouts: [],
+      recurringBlackouts: null,
       holidays: [],
       minStayByWeekday: {},
       seasons: [],
       leadTime: { minDays: 0, maxDays: 365 },
-      rulesJson: "[]",
+      rules: [],
     };
     setCal(next);
-    setSavedSnapshot(next); // ✅ reset "dirty" on reset
+    setSavedSnapshot(next);
   };
+
+  /**
+   * NOTE: When you load a specific calendar (e.g., user selects one in HeaderBar),
+   * call your fetchCalendarById(id) then:
+   *
+   *   const serverDoc = await fetchCalendarById(selectedId);
+   *   const normalized = normalizeCalendarFromServer(serverDoc);
+   *   setCal(normalized);
+   *   setSavedSnapshot(normalized);
+   *
+   * This keeps the UI stable and the dirty-check correct.
+   */
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted text-foreground">
@@ -117,8 +156,8 @@ export default function BookingEnginePage() {
           loadingCatalog={loadingCatalog}
           onSave={handleSave}
           onReset={resetToNew}
-          isDirty={isDirty}                     
-          setSavedSnapshot={setSavedSnapshot}           
+          isDirty={isDirty}
+          setSavedSnapshot={setSavedSnapshot}
         />
       </header>
 
@@ -129,12 +168,13 @@ export default function BookingEnginePage() {
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           <Card className="lg:col-span-3">
             <CardContent className="p-2 md:p-4">
-               <CalendarGrid
+              <CalendarGrid
                 cal={cal}
                 setCal={setCal}
                 view={view}
-                addMode={addMode}               
-                reservationEvents={reservationEvents}
+                addMode={addMode}
+                // When cal._id exists, CalendarGrid fetches reservations for the calendar
+                calendarMongoId={cal._id as string | undefined}
               />
             </CardContent>
           </Card>
@@ -146,13 +186,23 @@ export default function BookingEnginePage() {
       {/* FOOTER */}
       <footer className="mx-auto max-w-screen-2xl px-3 md:px-6 pb-8 pt-2 text-xs text-muted-foreground">
         <div className="flex items-center justify-between">
-          <span>© {new Date().getFullYear()} Strategic Machines Booking Engine</span>
+          <span>
+            © {new Date().getFullYear()} Strategic Machines Booking Engine
+          </span>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => navigator.clipboard.writeText(JSON.stringify(cal, null, 2))}>
-              <UploadCloud className="h-4 w-4 mr-2" />Copy JSON
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                navigator.clipboard.writeText(JSON.stringify(cal, null, 2))
+              }
+            >
+              <UploadCloud className="h-4 w-4 mr-2" />
+              Copy JSON
             </Button>
             <Button variant="outline" size="sm" onClick={resetToNew}>
-              <RotateCcw className="h-4 w-4 mr-2" />Reset
+              <RotateCcw className="h-4 w-4 mr-2" />
+              Reset
             </Button>
           </div>
         </div>

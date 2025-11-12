@@ -16,42 +16,54 @@ const addDaysYmd = (ymd: string, days: number) =>
 
 // GET /api/reservations?unitId=...&start=YYYY-MM-DD&end=YYYY-MM-DD
 // `end` must be EXCLUSIVE (UI can pass endInclusive+1day)
+// GET /api/reservations?unitId=...&calendarId=...&start=YYYY-MM-DD&end=YYYY-MM-DD
 export async function GET(req: NextRequest) {
   await dbConnect();
   const { searchParams } = new URL(req.url);
   const unitId = searchParams.get("unitId");
+  const calendarId = searchParams.get("calendarId");
   const start = searchParams.get("start");
   const end = searchParams.get("end");
 
-  if (!unitId || !start || !end) {
-    return NextResponse.json({ error: "unitId, start, end are required" }, { status: 400 });
+  if (!start || !end || (!unitId && !calendarId)) {
+    return NextResponse.json({ error: "start, end and (unitId or calendarId) are required" }, { status: 400 });
   }
-  if (!isValidObjectId(unitId)) {
+  if (unitId && !isValidObjectId(unitId)) {
     return NextResponse.json({ error: "Invalid unitId" }, { status: 400 });
   }
+  if (calendarId && !isValidObjectId(calendarId)) {
+    return NextResponse.json({ error: "Invalid calendarId" }, { status: 400 });
+  }
 
-  const startDate = toMidnightUTC(start);      // inclusive
-  const endDate = toMidnightUTC(end);          // exclusive
+  const toMidnightUTC = (ymd: string) => new Date(`${ymd}T00:00:00Z`);
+  const startDate = toMidnightUTC(start); // inclusive
+  const endDate = toMidnightUTC(end);     // exclusive
 
-  const items = await Reservation.find({
-    unitId,
+  const query: any = {
     status: { $in: ["hold", "confirmed"] },
-    startDate: { $lt: endDate },  // existing starts before requested end
-    endDate: { $gt: startDate },  // existing ends after requested start
-  })
-  .sort({ startDate: 1 })
-  .lean();
+    startDate: { $lt: endDate },
+    endDate: { $gt: startDate },
+  };
+  if (unitId) query.unitId = unitId;
+  if (calendarId) query.calendarId = calendarId;
+
+  const items = await Reservation.find(query)
+    .sort({ startDate: 1 })
+    .select({ startDate: 1, endDate: 1, status: 1, unitName: 1 }) // <-- include unitName
+    .lean();
 
   return NextResponse.json({
     overlap: items.length > 0,
-    items: items.map((r) => ({
+    items: items.map((r: any) => ({
       _id: String(r._id),
       startDate: r.startDate,
       endDate: r.endDate,
       status: r.status,
+      unitName: r.unitName,           // <-- return unitName for display
     })),
   });
 }
+
 
 // POST (unchanged logic except ensure you read cancel terms from *single* Calendar doc)
 export async function POST(req: NextRequest) {

@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link"
 import { CalendarState, CalendarCategory, CatalogRow } from "@/types/calendar";
 import { fetchCalendarById } from "@/lib/api/calendars";
+import { normalizeCalendarFromServer } from "@/lib/calendar/normalize"; 
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -196,10 +197,11 @@ export default function HeaderBar({
                     <DropdownMenuItem
                       key={c._id}
                       onClick={async () => {
-                        const full = await fetchCalendarById(c._id);
-                        if (full) {
-                          setCal(full);
-                          setSavedSnapshot(full);
+                        const serverDoc = await fetchCalendarById(c._id);
+                        if (serverDoc) {
+                          const normalized = normalizeCalendarFromServer(serverDoc);
+                          setCal(normalized);
+                          setSavedSnapshot(normalized);
                         }
                       }}
                       className="justify-between gap-2"

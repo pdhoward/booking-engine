@@ -1,15 +1,33 @@
-// What: Shared types for calendars used across components & API helpers.
+// types/calendar.ts
 
 export type CalendarCategory = "reservations" | "appointments";
 
-export type CatalogRow = { _id: string; name: string; version: number; active: boolean };
+export type CatalogRow = {
+  _id: string;
+  name: string;
+  version: number;
+  active: boolean;
+};
 
-export interface HolidayRule { date: string; minNights: number }
-export interface SeasonRule { start: string; end: string; price: number }
-export interface LeadTimeRule { minDays: number; maxDays: number }
+export interface HolidayRule {
+  _id?: string;                 // mongoose adds ids in arrays
+  date: string | Date;          // API may serialize; accept both on client
+  minNights?: number;           // optional in schema usage
+}
+
+export interface SeasonRule {
+  start: string | Date;
+  end: string | Date;
+  price: number;
+}
+
+export interface LeadTimeRule {
+  minDays: number;
+  maxDays: number;
+}
 
 export interface CalendarMeta {
-  _id?: string;
+  _id?: string;                 // stringified ObjectId in API responses
   name: string;
   owner: string;
   category: CalendarCategory;
@@ -20,12 +38,17 @@ export interface CalendarMeta {
   active: boolean;
 }
 
+export interface CalendarRule {
+  conditions: any;              // schema.Types.Mixed
+  event: any;                   // schema.Types.Mixed
+}
+
 export interface CalendarState extends CalendarMeta {
-  blackouts: string[];
-  recurringBlackouts?: string;
-  holidays: HolidayRule[];
+  blackouts: Array<string | Date>;        // Mongo is Date[]; accept string too
+  recurringBlackouts?: string | null;     // schema has string; allow null/undefined
+  holidays: HolidayRule[];                // matches { date, minNights }
   minStayByWeekday: Record<string, number>;
   seasons: SeasonRule[];
   leadTime: LeadTimeRule;
-  rulesJson: string;
+  rules: CalendarRule[];                  // 🔁 replace rulesJson with rules[]
 }
